@@ -1,4 +1,5 @@
-pub mod graphic;
+pub mod canvas;
+pub mod draw_engine;
 
 #[cfg(test)]
 mod tests {

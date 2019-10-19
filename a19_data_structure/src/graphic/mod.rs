@@ -50,7 +50,7 @@ impl BoundingBox {
 #[cfg(test)]
 mod tests {
 
-    use crate::data_structures::Point;
+    use crate::graphic::Point;
 
     #[test]
     fn distance_test() {
