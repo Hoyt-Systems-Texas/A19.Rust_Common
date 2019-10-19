@@ -1,6 +1,0 @@
-[workspace]
-
-members = [
-    "a19_core",
-    "a19_data_structure"
-]
