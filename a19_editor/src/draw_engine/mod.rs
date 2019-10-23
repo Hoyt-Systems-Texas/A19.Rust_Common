@@ -1,5 +1,7 @@
 pub mod event;
 pub mod shape;
+pub mod component;
+pub mod tool;
 
 use crate::draw_engine::event:: {
     KeyboardEvent

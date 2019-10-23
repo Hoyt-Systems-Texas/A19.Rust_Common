@@ -1,3 +1,5 @@
+pub mod matrix_2d;
+
 pub struct Point {
     pub x: f64,
     pub y: f64
