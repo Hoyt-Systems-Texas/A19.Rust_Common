@@ -3,13 +3,13 @@ use a19_data_structure::graphic:: {
     BoundingBox
 };
 
-use crate::draw_engine:: {
+use crate::canvas:: {
     DrawingCanvas,
 };
 
-use crate::draw_engine::event {
+use crate::draw_engine::event:: {
     KeyboardEvent
-}
+};
 
 /// Used to represent a drawing tool.
 pub trait DrawTool {

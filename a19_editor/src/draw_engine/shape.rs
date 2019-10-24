@@ -3,7 +3,7 @@ use a19_data_structure::graphic:: {
     Point
 };
 
-use crate::draw_engine:: {
+use crate::canvas:: {
     DrawingCanvas
 };
 

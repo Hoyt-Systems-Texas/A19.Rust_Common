@@ -2,5 +2,7 @@
 
 members = [
     "a19_core",
-    "a19_data_structure"
+    "a19_data_structure",
+    "a19_editor",
+    "a19_concurrent"
 ]

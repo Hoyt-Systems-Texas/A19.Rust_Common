@@ -16,6 +16,11 @@ pub struct Matrix2d<TNode> {
     nodes: Vec<TNode>
 }
 
+/// Used to create a matrix of the specified size.
+/// #arguments
+/// * 'rows' - The number of rows in the matrix.
+/// * 'columns' - The number of columns in a matrix.
+/// * 'created_fn' - The function to use to create the node.
 pub fn create_matrix<TNode>(
     rows: usize,
     cols: usize,
