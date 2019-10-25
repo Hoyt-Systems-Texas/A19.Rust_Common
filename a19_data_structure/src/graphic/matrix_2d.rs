@@ -16,43 +16,46 @@ pub struct Matrix2d<TNode> {
     nodes: Vec<TNode>
 }
 
-/// Used to create a matrix of the specified size.
-/// #arguments
-/// * 'rows' - The number of rows in the matrix.
-/// * 'columns' - The number of columns in a matrix.
-/// * 'created_fn' - The function to use to create the node.
-pub fn create_matrix<TNode>(
-    rows: usize,
-    cols: usize,
-    create_fn: fn(usize, usize) -> TNode) -> Matrix2d<TNode> {
-    let length = rows * cols;
-    let mut nodes = Vec::with_capacity(length);
-    
-    for row in 0..rows {
-        for col in 0..cols {
-            nodes.push(create_fn(row, col))
+impl<TNode> Matrix2d<TNode> {
+
+    /// Used to create a matrix of the specified size.
+    /// #arguments
+    /// * `rows` - The number of rows in the matrix.
+    /// * `columns` - The number of columns in a matrix.
+    /// * `created_fn` - The function to use to create the node.
+    pub fn new(
+        rows: usize,
+        cols: usize,
+        create_fn: fn(usize, usize) -> TNode) -> Matrix2d<TNode> {
+        let length = rows * cols;
+        let mut nodes = Vec::with_capacity(length);
+
+        for row in 0..rows {
+            for col in 0..cols {
+                nodes.push(create_fn(row, col))
+            }
+        }
+
+        Matrix2d {
+            rows,
+            cols,
+            length,
+            nodes
         }
     }
 
-    Matrix2d {
-        rows,
-        cols,
-        length,
-        nodes
-    }
-}
-
-impl<TNode> Matrix2d<TNode> {
-
     /// Used to calculate the position of a node.
+    /// # Arguments
+    /// `row` - The position in the row to calculate.
+    /// `col` - The position in the column to calculate.
     fn calculate_pos(&self, row: usize, col: usize) -> usize {
         self.rows * row + col
     }
 
     /// Used to get the mutable reference of the node.
-    /// #arguments
-    /// 'row' - The row to get the node for.
-    /// 'col' - The col to get the node for.
+    /// # Arguments
+    /// `row` - The row to get the node for.
+    /// `col` - The col to get the node for.
     pub fn get_node(&mut self, row: usize, col: usize) -> Option<&mut TNode> {
         let pos = self.calculate_pos(row, col) as usize;
         if pos < self.length {
@@ -63,6 +66,12 @@ impl<TNode> Matrix2d<TNode> {
     }
 
     /// Used to walk a nodes in a grid
+    /// # Arguments
+    /// `row_start` - The starting of the row.
+    /// `row_end` - The ending row.
+    /// `col_start` - The starting column.
+    /// `col_end` - The ending column.
+    /// `act` - The action to run on the nodes.
     pub fn walk_nodes(
         &mut self,
         row_start: usize, row_end: usize,
@@ -88,7 +97,6 @@ mod tests {
 
     use crate::graphic::matrix_2d::{
         Matrix2d,
-        create_matrix
     };
 
     struct Node {
@@ -99,7 +107,7 @@ mod tests {
 
     #[test]
     fn create_test() {
-        let mut m = create_matrix(10, 10, |row, col| {
+        let mut m = Matrix2d::new(10, 10, |row, col| {
             Node {
                 row,
                 col,
@@ -121,7 +129,7 @@ mod tests {
 
     #[test]
     fn walk_nodes_test() {
-        let mut m = create_matrix(10, 10, |row, col| {
+        let mut m = Matrix2d::new(10, 10, |row, col| {
             Node {
                 row,
                 col,
@@ -141,7 +149,7 @@ mod tests {
 
     #[test]
     fn walk_nodes_out_of_bounds() {
-        let mut m = create_matrix(10, 10, |row, col| {
+        let mut m = Matrix2d::new(10, 10, |row, col| {
             Node {
                 row,
                 col,
