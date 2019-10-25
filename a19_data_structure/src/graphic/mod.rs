@@ -47,12 +47,6 @@ impl Point {
         ((end_point.x - self.x).powi(2) + (end_point.y - self.y).powi(2)).sqrt()
     }
 
-    /// Checks to see if a point lies on a line.  Note that that the points already need to be
-    /// check to see if they are collinear.
-    pub fn on_segment(&self, end_point: &Point, point: &Point) -> bool {
-        point.x <= self.x.max(end_point.x) && point.x >= self.x.min(end_point.x) &&
-        point.y <= self.y.max(end_point.y) && point.y >= self.y.min(end_point.y)
-    }
 }
 
 impl Graphic for Point {

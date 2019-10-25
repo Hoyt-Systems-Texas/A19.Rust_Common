@@ -127,7 +127,7 @@ pub trait Shape {
     /// Checks to see if a point is inside the shape.
     /// # Arguments
     /// `point` - The point to check and see if it's inside.
-    fn is_inisde(&self, point: &Point) -> bool;
+    fn is_inside(&self, point: &Point) -> bool;
 }
 
 impl Polygon {
@@ -203,7 +203,7 @@ impl Shape for Polygon {
         self.bounding_box.is_touching(other_box)
     }
 
-    fn is_inisde(&self, point: &Point) -> bool {
+    fn is_inside(&self, point: &Point) -> bool {
         if !self.is_valid() {
             false
         } else {
@@ -218,9 +218,10 @@ impl Shape for Polygon {
                 if Line::insertection(line_start, line_end, &point, &extreme) {
                     match Line::orientation(line_start, point, line_end) {
                         LineSegmentOrientation::Collinear => {
-                            Line::on_segment(line_start, point, line_end);
-                            count = 1;
-                            break;
+                            if Line::on_segment(line_start, line_end, point) {
+                                count = 1;
+                                break;
+                            }
                         }
                         _ => {
                             count = count + 1;
@@ -242,7 +243,8 @@ impl Shape for Polygon {
 pub mod tests {
     use crate::graphic::shape:: {
         Line,
-        Polygon
+        Polygon,
+        Shape
     };
     use crate::graphic:: {
         Point,
@@ -302,6 +304,48 @@ pub mod tests {
     }
 
     #[test]
+    pub fn insertection_test1() {
+        let p1 = Point::new(10.0, 10.0);
+        let q1 = Point::new(10.0, 20.0);
+
+        let p2 = Point::new(9.0, 13.0);
+        let q2 = Point::new(11.0, 16.0);
+
+        assert!(Line::insertection(&p1, &q1, &p2, &q2));
+    }
+
+    #[test]
+    pub fn insertection_test2() {
+        let p1 = Point::new(10.0, 10.0);
+        let q1 = Point::new(10.0, 20.0);
+
+        let p2 = Point::new(11.0, 13.0);
+        let q2 = Point::new(11.0, 16.0);
+
+        assert!(!Line::insertection(&p1, &q1, &p2, &q2));
+    }
+
+    #[test]
+    pub fn on_segment_test1() {
+        let p1 = Point::new(10.0, 10.0);
+        let q1 = Point::new(10.0, 20.0);
+
+        let p2 = Point::new(10.0, 13.0);
+
+        assert!(Line::on_segment(&p1, &q1, &p2));
+    }
+
+    #[test]
+    pub fn on_segment_test2() {
+        let p1 = Point::new(10.0, 10.0);
+        let q1 = Point::new(10.0, 20.0);
+
+        let p2 = Point::new(11.0, 13.0);
+
+        assert!(!Line::on_segment(&p1, &q1, &p2));
+    }
+
+    #[test]
     pub fn polygon_add_test() {
         let mut polygon = Polygon::new(20);
         polygon.add(Point {
@@ -317,5 +361,62 @@ pub mod tests {
             y: 10.0
         });
         assert!(polygon.is_valid())
+    }
+
+    #[test]
+    pub fn polygon_overlap_test() {
+        let mut polygon = Polygon::new(20);
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        polygon.add(Point {
+            x: 15.0,
+            y: 15.0
+        });
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        let r = polygon.is_inside(&Point::new(11.0, 11.0));
+        assert!(r);
+    }
+
+    #[test]
+    pub fn polygon_not_inside_test() {
+        let mut polygon = Polygon::new(20);
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        polygon.add(Point {
+            x: 15.0,
+            y: 15.0
+        });
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        let r = polygon.is_inside(&Point::new(9.0, 11.0));
+        assert!(!r);
+    }
+
+    #[test]
+    pub fn polygon_on_edget_test() {
+        let mut polygon = Polygon::new(20);
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        polygon.add(Point {
+            x: 15.0,
+            y: 15.0
+        });
+        polygon.add(Point {
+            x: 10.0,
+            y: 10.0
+        });
+        let r = polygon.is_inside(&Point::new(11.0, 11.0));
+        assert!(r);
     }
 }
