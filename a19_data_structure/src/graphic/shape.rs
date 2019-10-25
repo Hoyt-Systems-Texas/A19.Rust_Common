@@ -112,7 +112,7 @@ pub struct Polygon {
     bounding_box: BoundingBox
 }
 
-pub trait Shape {
+pub trait Shape: Graphic {
 
     /// Used to get the bouding box.
     fn get_bounding_box(&self) -> &BoundingBox;
@@ -243,12 +243,89 @@ impl Shape for Polygon {
     }
 }
 
+pub struct Circle {
+    center: Point,
+    radius: f64,
+    bouding_box: BoundingBox
+}
+
+impl Circle {
+
+    fn new(center: Point, radius: f64) -> Circle {
+        let mut c = Circle{
+            center,
+            radius,
+            bouding_box: BoundingBox {
+                top_left: Point::new(0.0, 0.0),
+                bottom_right: Point::new(0.0, 0.0)
+            }
+        };
+        c.update();
+        c
+    }
+
+    fn update(&mut self) {
+        self.bouding_box.top_left = Point::new(
+            self.center.x - self.radius, 
+            self.center.y - self.radius);
+        self.bouding_box.bottom_right = Point::new(
+            self.center.x + self.radius,
+            self.center.y + self.radius);
+    }
+}
+
+impl Shape for Circle {
+    /// Used to get the bouding box.
+    fn get_bounding_box(&self) -> &BoundingBox {
+        &self.bouding_box
+    }
+
+    /// Checks to see if a bounding boxes are touching.
+    /// # Arguments
+    /// `other_box` - The other box to check to see if they are touching.
+    fn is_touching_box(&self, other_box: &BoundingBox) -> bool {
+        self.bouding_box.is_touching(other_box)
+    }
+
+    fn is_inside(&self, point: &Point) -> bool {
+        let r2 = self.radius.powi(2);
+        (point.x - self.center.x).powi(2) <= r2
+            && (point.y - self.center.y).powi(2) <= r2
+    }
+}
+
+impl Graphic for Circle {
+    /// Used to normalize the values between 0 and 1.
+    /// # Arguments
+    /// `value` - The value to normalize by.
+    fn normalize(&mut self, value: &f64) {
+        self.radius = self.radius / value;
+        self.center.normalize(value);
+    }
+
+    /// Translate the shape by the specified amount and updates it.
+    /// # Arguments
+    /// `x_amount` - The amount to translate by in the x direction.
+    /// `y_amount` - The amount to translate by in the y direction.
+    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
+        self.center.translate_up(x_amount, y_amount);
+    }
+
+    /// Scales the point by the factor.
+    /// # Arguments
+    /// `factor` - The factor to scale by.
+    fn scale(&mut self, factor: &f64) {
+        self.radius = self.radius * factor;
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use crate::graphic::shape:: {
         Line,
         Polygon,
-        Shape
+        Shape,
+        Circle
     };
     use crate::graphic:: {
         Point,
@@ -422,5 +499,23 @@ pub mod tests {
         });
         let r = polygon.is_inside(&Point::new(11.0, 11.0));
         assert!(r);
+    }
+
+    #[test]
+    pub fn circle_point_inside_test() {
+        let circle = Circle::new(Point::new(10.0, 10.0), 5.0);
+        assert!(circle.is_inside(&Point::new(11.0, 11.0)));
+        assert!(circle.is_inside(&Point::new(14.5, 14.5)));
+        assert!(circle.is_inside(&Point::new(14.9, 14.9)));
+        assert!(circle.is_inside(&Point::new(5.1, 5.1)));
+    }
+
+    #[test]
+    pub fn circle_bounding_box_test() {
+        let circle = Circle::new(Point::new(10.0, 10.0), 5.0);
+        assert!(circle.is_touching_box(circle.get_bounding_box()));
+        let c2 = Circle::new(Point::new(14.0, 14.0), 2.0);
+        assert!(circle.is_touching_box(c2.get_bounding_box()));
+        assert!(c2.is_touching_box(circle.get_bounding_box()));
     }
 }

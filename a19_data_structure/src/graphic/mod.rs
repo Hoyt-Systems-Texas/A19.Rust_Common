@@ -83,6 +83,8 @@ impl Graphic for Point {
     }
 }
 
+#[derive(Debug)]
+#[derive(Clone)]
 pub struct BoundingBox {
     top_left: Point,
     bottom_right: Point,
@@ -149,8 +151,8 @@ impl BoundingBox {
     pub fn is_intersected(&self, other_box: &BoundingBox) -> bool {
         !(other_box.top_left.x > self.bottom_right.x
             || other_box.bottom_right.x < self.top_left.x
-            || other_box.top_left.y < self.bottom_right.y
-            || other_box.bottom_right.y > self.top_left.y)
+            || other_box.top_left.y > self.bottom_right.y
+            || other_box.bottom_right.y < self.top_left.y)
     }
 
     /// Checks to see if the bounding boxes are touching.
