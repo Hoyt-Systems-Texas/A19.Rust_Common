@@ -5,9 +5,7 @@ use crate::graphic:: {
     LineSegmentOrientation
 };
 
-use std::slice:: {
-    Iter
-};
+use std::slice::Iter;
 
 #[derive(Clone)]
 #[derive(Debug)]
@@ -190,6 +188,12 @@ impl Graphic for Polygon {
             point.translate_up(x_amount, y_amount);
         }
         self.change();
+    }
+
+    fn scale(&mut self, factor: &f64) {
+        for point in self.points.iter_mut() {
+            point.scale(factor);
+        }
     }
 }
 

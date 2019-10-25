@@ -1,5 +1,3 @@
-use std::vec::Vec;
-
 pub mod matrix_2d;
 pub mod shape;
 
@@ -32,10 +30,18 @@ pub trait Graphic {
     /// `x_amount` - The amount to translate by in the x direction.
     /// `y_amount` - The amount to translate by in the y direction.
     fn translate_up(&mut self, x_amount: &f64, y_amount: &f64);
+
+    /// Scales the point by the factor.
+    /// # Arguments
+    /// `factor` - The factor to scale by.
+    fn scale(&mut self, factor: &f64);
 }
 
 impl Point {
 
+    /// Used to create a new point.
+    /// `x` - The x coordinate.
+    /// `y` - The y coordinate.
     pub fn new(x: f64, y: f64) -> Point {
         Point {
             x,
@@ -43,13 +49,24 @@ impl Point {
         }
     }
     /// Used to calculate the distance between 2 points.
+    /// # Arguments
+    /// `end_point` - The ending point to calculate the distance.
     pub fn distance(&self, end_point: &Point) -> f64 {
         ((end_point.x - self.x).powi(2) + (end_point.y - self.y).powi(2)).sqrt()
+    }
+
+    /// Used to calculate the centroid of one axis.
+    /// @ Arguments
+    /// `start` - The starting point to calculate.
+    /// `end` - The ending point.
+    pub fn centroid(start: &f64, end: &f64) -> f64 {
+        start + (end - start)
     }
 
 }
 
 impl Graphic for Point {
+
     fn normalize(&mut self, value: &f64) {
         self.x = self.x / value;
         self.y = self.x / value;
@@ -58,6 +75,11 @@ impl Graphic for Point {
     fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
         self.x = self.x + x_amount;
         self.y = self.y + y_amount;
+    }
+
+    fn scale(&mut self, factor: &f64) {
+        self.x = self.x * factor;
+        self.y = self.y * factor;
     }
 }
 
@@ -91,6 +113,13 @@ impl BoundingBox {
     /// Used to get the height of the bounding box.
     pub fn height(&self) -> f64 {
         self.bottom_right.y - self.top_left.y
+    }
+
+    /// Used to find the center of a bounding box.
+    pub fn center(&self) -> Point {
+        Point::new(
+            Point::centroid(&self.bottom_right.x, &self.top_left.x),
+            Point::centroid(&self.bottom_right.y, &self.top_left.y))
     }
 
     /// Checks to see if a box is inside of another box.
