@@ -107,6 +107,14 @@ impl BoundingBox {
         &mut self.bottom_right
     }
 
+    pub fn top_left(&self) -> &Point {
+        &self.top_left
+    }
+
+    pub fn bottom_right(&self) -> &Point {
+        &self.bottom_right
+    }
+
     /// Used to get the width of a bounding box.
     pub fn width(&self) -> f64 {
         self.bottom_right.x - self.top_left.x

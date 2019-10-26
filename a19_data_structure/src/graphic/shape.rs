@@ -265,12 +265,11 @@ impl Circle {
     }
 
     fn update(&mut self) {
-        self.bouding_box.top_left = Point::new(
-            self.center.x - self.radius, 
-            self.center.y - self.radius);
-        self.bouding_box.bottom_right = Point::new(
-            self.center.x + self.radius,
-            self.center.y + self.radius);
+        // Do a zero copy.
+        self.bouding_box.top_left.x = self.center.x - self.radius;
+        self.bouding_box.top_left.y = self.center.y - self.radius;
+        self.bouding_box.bottom_right.x = self.center.x + self.radius;
+        self.bouding_box.bottom_right.y = self.center.y + self.radius;
     }
 }
 
@@ -301,6 +300,7 @@ impl Graphic for Circle {
     fn normalize(&mut self, value: &f64) {
         self.radius = self.radius / value;
         self.center.normalize(value);
+        self.update();
     }
 
     /// Translate the shape by the specified amount and updates it.
@@ -309,6 +309,7 @@ impl Graphic for Circle {
     /// `y_amount` - The amount to translate by in the y direction.
     fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
         self.center.translate_up(x_amount, y_amount);
+        self.update();
     }
 
     /// Scales the point by the factor.
@@ -316,8 +317,111 @@ impl Graphic for Circle {
     /// `factor` - The factor to scale by.
     fn scale(&mut self, factor: &f64) {
         self.radius = self.radius * factor;
+        self.update();
     }
 }
+
+pub struct Rectangle {
+    top_left: Point,
+    width: f64,
+    height: f64,
+    bounding_box: BoundingBox
+}
+
+impl Rectangle {
+    fn new(
+        top_left: Point,
+        width: f64,
+        height: f64) -> Rectangle {
+        let bottom_right = Point {
+            x: top_left.x + width,
+            y: top_left.y + height
+        };
+        let top_left_c = top_left.clone();
+
+        Rectangle {
+            top_left,
+            width,
+            height,
+            bounding_box: BoundingBox {
+                top_left: top_left_c,
+                bottom_right
+            }
+        }
+    }
+
+    fn update(&mut self) {
+        self.bounding_box.top_left.x = self.top_left.x;
+        self.bounding_box.top_left.y = self.top_left.y;
+        self.bounding_box.bottom_right.x = self.top_left.x + self.width;
+        self.bounding_box.bottom_right.y = self.top_left.y + self.height;
+    }
+}
+
+impl Rectangle {
+
+    fn top_left(&self) -> &Point {
+        &self.top_left
+    }
+}
+
+impl Shape for Rectangle {
+
+    /// Used to get the bouding box.
+    fn get_bounding_box(&self) -> &BoundingBox {
+        &self.bounding_box
+    }
+
+    /// Checks to see if a bounding boxes are touching.
+    /// # Arguments
+    /// `other_box` - The other box to check to see if they are touching.
+    fn is_touching_box(&self, other_box: &BoundingBox) -> bool {
+        self.bounding_box.is_touching(other_box)
+    }
+
+    /// Checks to see if a point is inside the shape.
+    /// # Arguments
+    /// `point` - The point to check and see if it's inside.
+    fn is_inside(&self, point: &Point) -> bool {
+        self.top_left.x <= point.x &&
+            self.bounding_box.bottom_right.x >= point.x &&
+            self.top_left.y <= point.y &&
+            self.bounding_box.bottom_right.y >= point.y
+    }
+}
+
+impl Graphic for Rectangle {
+
+    /// Used to normalize the values between 0 and 1.
+    /// # Arguments
+    /// `value` - The value to normalize by.
+    fn normalize(&mut self, value: &f64) {
+        self.top_left.normalize(value);
+        self.width = self.width / value;
+        self.height = self.height / value;
+        self.update();
+    }
+
+    /// Translate the shape by the specified amount and updates it.
+    /// # Arguments
+    /// `x_amount` - The amount to translate by in the x direction.
+    /// `y_amount` - The amount to translate by in the y direction.
+    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
+        self.top_left.translate_up(x_amount, y_amount);
+        self.update();
+    }
+
+    /// Scales the point by the factor.
+    /// # Arguments
+    /// `factor` - The factor to scale by.
+    fn scale(&mut self, factor: &f64) {
+        self.top_left.scale(factor);
+        self.height = self.height * factor;
+        self.width = self.width * factor;
+        self.update();
+    }
+}
+
 
 #[cfg(test)]
 pub mod tests {
@@ -325,7 +429,8 @@ pub mod tests {
         Line,
         Polygon,
         Shape,
-        Circle
+        Circle,
+        Rectangle
     };
     use crate::graphic:: {
         Point,
@@ -517,5 +622,28 @@ pub mod tests {
         let c2 = Circle::new(Point::new(14.0, 14.0), 2.0);
         assert!(circle.is_touching_box(c2.get_bounding_box()));
         assert!(c2.is_touching_box(circle.get_bounding_box()));
+    }
+
+    #[test]
+    pub fn rectangle_box_check() {
+        let rect = Rectangle::new(Point::new(10.0, 10.0), 5.0, 5.0);
+        let bouding_box = rect.get_bounding_box();
+        assert_eq!(rect.top_left().x, bouding_box.top_left.x);
+        assert_eq!(rect.top_left().y, bouding_box.top_left.y);
+        assert_eq!(rect.width + rect.top_left.x, bouding_box.bottom_right.x);
+        assert_eq!(rect.height + rect.top_left.y, bouding_box.bottom_right.y);
+    }
+
+    #[test]
+    pub fn rectangle_inside_test() {
+        let rect = Rectangle::new(Point::new(10.0, 10.0), 5.0, 5.0);
+        assert!(rect.is_inside(&Point::new(11.0, 11.0)));
+        assert!(rect.is_inside(&Point::new(10.0, 15.0)));
+    }
+
+    #[test]
+    pub fn rectangle_outside_test() {
+        let rect = Rectangle::new(Point::new(10.0, 10.0), 5.0, 5.0);
+        assert!(!rect.is_inside(&Point::new(9.9, 9.9)));
     }
 }
