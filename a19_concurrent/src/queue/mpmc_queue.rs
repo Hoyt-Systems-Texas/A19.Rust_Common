@@ -59,7 +59,6 @@ struct MpmcQueue<T> {
     capacity: usize,
     sequence_number: PaddedUsize,
     producer: PaddedUsize,
-    consumer: PaddedUsize
 }
 
 impl<T> MpmcQueue<T> {
@@ -77,14 +76,10 @@ impl<T> MpmcQueue<T> {
                 padding: [0; 31],
                 counter: AtomicUsize::new(0)
             },
-            consumer: PaddedUsize {
-                padding: [0; 31],
-                counter: AtomicUsize::new(0)
-            }
         };
         for _ in 0..power_of_2 {
             let node = MpmcNode {
-                id: AtomicUsize::new(std::usize::MAX),
+                id: AtomicUsize::new(0),
                 value: None
             };
             queue.ring_buffer.push(node);
@@ -108,32 +103,21 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
     fn poll(&mut self) -> Option<T> {
         let mut i: u64 = 0;
         loop {
-            let s_index = self.sequence_number.counter.load(Ordering::Acquire);
-            let p_index = self.producer.counter.load(Ordering::Acquire);
+            let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
+            let p_index = self.producer.counter.load(Ordering::Relaxed);
             if p_index > s_index {
                 unsafe {
-                    let last_pos = self.pos(s_index + 1);
+                    let last_pos = self.pos(s_index);
                     let node = self.ring_buffer.get_unchecked_mut(last_pos);
                     let node_id = node.id.load(Ordering::Acquire);
                     // Verify the node id matches the index id.
-                    if node_id == (s_index + 1) {
+                    if node_id == s_index {
                         // Try and claim the slot.
-                        match self.sequence_number.counter.compare_exchange(s_index, s_index + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                        match self.sequence_number.counter.compare_exchange_weak(s_index, s_index + 1, Ordering::Relaxed, Ordering::Relaxed) {
                             Ok(_) => {
                                 let v = replace(&mut node.value, Option::None);
-                                let swap_r = node.id.swap(s_index, Ordering::SeqCst);
-                                if (swap_r != s_index + 1) {
-                                    panic!(format!("The value has been changed {}:{}", swap_r, p_index))
-                                }
-                                let consumer = self.consumer.counter.load(Ordering::Relaxed);
-                                self.consumer.counter.fetch_add(1, Ordering::SeqCst);
-                                match v {
-                                    None => {
-                                        panic!(format!("Return a None! {}:{}:{}:{}:{:b}:{:b}", p_index, s_index, consumer, p_index - consumer, self.capacity, self.mask))}
-                                    Some(_) => {
-                                        break v
-                                    }
-                                }
+                                node.id.store(0, Ordering::Relaxed);
+                                break v
                             },
                             Err(_) => {
                             }
@@ -158,28 +142,29 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
         let capacity = self.capacity;
         loop {
             let p_index = self.producer.counter.load(Ordering::Relaxed);
-            let c_index = self.consumer.counter.load(Ordering::Acquire);
+            let c_index = self.sequence_number.counter.load(Ordering::Relaxed);
+            let c_pos = self.pos(c_index);
             if p_index < capacity
                 || p_index - capacity < c_index {
-                    let id = p_index + 1;
-                    let pos = self.pos(id);
+                    let pos = self.pos(p_index);
                     let mut node = unsafe {self.ring_buffer.get_unchecked_mut(pos)};
-                    match node.value {
-                        None => {
-                            match self.producer.counter.compare_exchange(p_index, p_index + 1, Ordering::SeqCst, Ordering::Relaxed) {
-                                Ok(_) => {
-                                    node.value = Some(value);
-                                    node.id.store(id, Ordering::SeqCst);
-                                    break true
-                                },
-                                Err(_) => {
+                    if node.id.load(Ordering::Acquire) == 0 {
+                        match node.value {
+                            None => {
+                                match self.producer.counter.compare_exchange_weak(p_index, p_index + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                                    Ok(_) => {
+                                        node.value = Some(value);
+                                        node.id.store(p_index, Ordering::Relaxed);
+                                        break true
+                                    },
+                                    Err(_) => {
+                                    }
                                 }
+                            },
+                            _ => {
+                                panic!(format!("Value shouldn't have been set.{}:{}:{}:{}", pos, c_pos, p_index, node.id.load(Ordering::Acquire)))
                             }
-                        },
-                        _ => {
-                            panic!(format!("Value shouldn't have been set.{}:{}:{}", pos, c_index, p_index))
                         }
-
                     }
             } else {
                 break false;
@@ -234,7 +219,7 @@ mod tests {
     #[test]
     pub fn use_thread_queue_test() {
         time_test!();
-        let queue: Arc<MpmcQueueWrap<u64>> = Arc::new(MpmcQueueWrap::new(100_000));
+        let queue: Arc<MpmcQueueWrap<u64>> = Arc::new(MpmcQueueWrap::new(10_000_000));
         let write_queue = queue.clone();
         let write_thread = thread::spawn(move || {
             for i in 0..100_000_000 {
