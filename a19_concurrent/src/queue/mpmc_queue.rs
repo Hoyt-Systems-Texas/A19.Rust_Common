@@ -211,20 +211,13 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     let pos = self.pos(p_index);
                     let mut node = unsafe {self.ring_buffer.get_unchecked_mut(pos)};
                     if node.id.load(Ordering::Acquire) == 0 {
-                        match node.value {
-                            None => {
-                                match self.producer.counter.compare_exchange_weak(p_index, p_index + 1, Ordering::Relaxed, Ordering::Relaxed) {
-                                    Ok(_) => {
-                                        node.value = Some(value);
-                                        node.id.store(p_index, Ordering::Relaxed);
-                                        break true
-                                    },
-                                    Err(_) => {
-                                    }
-                                }
+                        match self.producer.counter.compare_exchange_weak(p_index, p_index + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                            Ok(_) => {
+                                node.value = Some(value);
+                                node.id.store(p_index, Ordering::Relaxed);
+                                break true
                             },
-                            _ => {
-                                panic!(format!("Value shouldn't have been set.{}:{}:{}:{}", pos, c_pos, p_index, node.id.load(Ordering::Acquire)))
+                            Err(_) => {
                             }
                         }
                     } else {
@@ -264,15 +257,20 @@ mod tests {
     pub fn use_thread_queue_test() {
         time_test!();
         let queue: Arc<MpmcQueueWrap<usize>> = Arc::new(MpmcQueueWrap::new(10_000_000));
-        let write_queue = queue.clone();
+        let write_thread_num = 2;
+        let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num); 
         let spins: usize = 100_000_000;
-        let write_thread = thread::spawn(move || {
-            for i in 0..spins {
-                while !write_queue.offer(i) {
-                    thread::yield_now()
+        for _ in 0..write_thread_num {
+            let write_queue = queue.clone();
+            let write_thread = thread::spawn(move || {
+                for i in 0..(spins / write_thread_num) {
+                    while !write_queue.offer(i) {
+                        thread::yield_now()
+                    }
                 }
-            }
-        });
+            });
+            write_threads.push(write_thread);
+        }
 
         let thread_num: usize = 2;
         let mut read_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(thread_num);
@@ -299,7 +297,9 @@ mod tests {
             read_threads.push(read_thread);
         }
 
-        write_thread.join().unwrap();
+        for num in 0..write_thread_num {
+            write_threads.remove(write_thread_num - num - 1).join().unwrap();
+        }
         for num in 0..thread_num {
             read_threads.remove(thread_num - num - 1).join().unwrap();
         }
