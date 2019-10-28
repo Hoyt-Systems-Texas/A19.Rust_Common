@@ -330,7 +330,7 @@ mod tests {
                     let result = read_queue.drain(|_| {
                     }, 1000);
                     count = count + result;
-                    if (count == 0) {
+                    if count == 0 {
                         thread::yield_now();
                     }
                     if count > (read_spins - 1000 * thread_num) {
