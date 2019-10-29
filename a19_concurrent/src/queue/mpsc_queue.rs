@@ -151,8 +151,10 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
         loop {
             let p_index = self.producer.counter.load(Ordering::Relaxed);
             let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
-            let elements_left = p_index - s_index;
-            if p_index > s_index {
+            if p_index <= s_index {
+                break 0
+            } else {
+                let elements_left = p_index - s_index;
                 let request = limit.min(elements_left);
                 // Have to do this a little bit different.
                 self.sequence_number.counter.store(s_index + request, Ordering::Relaxed);
@@ -184,8 +186,6 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                     }
                 }
                 break request
-            } else {
-                break 0
             }
         }
     }

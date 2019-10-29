@@ -1,4 +1,3 @@
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::vec::Vec;
 use std::mem::replace;
@@ -142,8 +141,10 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
         loop {
             let p_index = self.producer.counter.load(Ordering::Relaxed);
             let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
-            let elements_left = p_index - s_index;
-            if p_index > s_index {
+            if p_index <= s_index {
+                break 0
+            } else {
+                let elements_left = p_index - s_index;
                 let request = limit.min(elements_left);
                 // Have to do this a little bit different.
                 match self.sequence_number.counter.compare_exchange_weak(s_index, s_index + request, Ordering::Relaxed, Ordering::Relaxed) {
@@ -180,8 +181,6 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     Err(_) => {
                     }
                 }
-                break 0
-            } else {
                 break 0
             }
         }
