@@ -1,4 +1,3 @@
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::vec::Vec;
 use std::mem::replace;
@@ -6,39 +5,54 @@ use a19_core::pow2::PowOf2;
 use std::thread;
 use crate::queue::{ConcurrentQueue, PaddedUsize};
 use std::cell::UnsafeCell;
+use std::sync::Arc;
 
-struct MpmcNode<T> {
+pub struct MpscNode<T> {
     id: AtomicUsize,
     value: Option<T>,
 }
-
-pub struct MpmcQueueWrap<T> {
-    queue: UnsafeCell<MpmcQueue<T>>,
+ 
+pub struct MpscQueueWrap<T> {
+    queue: Arc<UnsafeCell<MpscQueue<T>>>
 }
 
-unsafe impl<T> Sync for MpmcQueueWrap<T> {}
-unsafe impl<T> Send for MpmcQueueWrap<T> {}
+/// Forces result move guards.
+pub struct MpscQueueReceive<T> {
+    queue: Arc<UnsafeCell<MpscQueue<T>>>
+}
 
-impl<T> MpmcQueueWrap<T> {
+unsafe impl<T> Sync for MpscQueueWrap<T> {}
+unsafe impl<T> Send for MpscQueueWrap<T> {}
 
-    fn new(queue_size: usize) -> Self {
-        let queue = UnsafeCell::new(MpmcQueue::new(queue_size));
-        MpmcQueueWrap {
+impl<T> MpscQueueWrap<T> {
+
+    fn new(queue_size: usize) -> (MpscQueueWrap<T>, MpscQueueReceive<T>) {
+        let queue = Arc::new(UnsafeCell::new(MpscQueue::new(queue_size)));
+        let send_queue = queue.clone();
+        (MpscQueueWrap {
             queue
-        }
-    }
-
-    fn poll(&self) -> Option<T> {
-        unsafe {
-            let queue = &mut *self.queue.get();
-            queue.poll()
-        }
+        },
+        MpscQueueReceive {
+            queue: send_queue
+        })
     }
 
     fn offer(&self, v: T) -> bool {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.offer(v)
+        }
+    }
+}
+
+unsafe impl<T> Send for MpscQueueReceive<T> {}
+
+impl <T> MpscQueueReceive<T> {
+
+    fn poll(&self) -> Option<T> {
+        unsafe {
+            let queue = &mut *self.queue.get();
+            queue.poll()
         }
     }
 
@@ -50,19 +64,23 @@ impl<T> MpmcQueueWrap<T> {
     }
 }
 
-struct MpmcQueue<T> {
-    
+/// A thread pool that is safe for multiple threads to read from but only a single thread to read.
+struct MpscQueue<T> {
     mask: usize,
-    ring_buffer: Vec<MpmcNode<T>>,
+    ring_buffer: Vec<MpscNode<T>>,
     capacity: usize,
     sequence_number: PaddedUsize,
-    producer: PaddedUsize,
+    producer: PaddedUsize
 }
 
-impl<T> MpmcQueue<T> {
+unsafe impl<T> Send for MpscQueue<T> {}
+unsafe impl<T> Sync for MpscQueue<T> {}
+
+impl<T> MpscQueue<T> {
+
     fn new(queue_size: usize) -> Self {
         let power_of_2 = queue_size.round_to_power_of_two();
-        let mut queue = MpmcQueue {
+        let mut queue = MpscQueue {
             ring_buffer: Vec::with_capacity(power_of_2),
             capacity: power_of_2,
             mask: power_of_2 - 1,
@@ -73,10 +91,10 @@ impl<T> MpmcQueue<T> {
             producer: PaddedUsize {
                 padding: [0; 31],
                 counter: AtomicUsize::new(1)
-            },
+            }
         };
         for _ in 0..power_of_2 {
-            let node = MpmcNode {
+            let node = MpscNode {
                 id: AtomicUsize::new(0),
                 value: None
             };
@@ -89,13 +107,9 @@ impl<T> MpmcQueue<T> {
     fn pos(&self, index: usize) -> usize {
         index & self.mask
     }
-
 }
 
-unsafe impl<T> Sync for MpmcQueue<T> {}
-unsafe impl<T> Send for MpmcQueue<T> {}
-
-impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
+impl<T> ConcurrentQueue<T> for MpscQueue<T> {
 
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T> {
@@ -111,15 +125,10 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     // Verify the node id matches the index id.
                     if node_id == s_index {
                         // Try and claim the slot.
-                        match self.sequence_number.counter.compare_exchange_weak(s_index, s_index + 1, Ordering::Relaxed, Ordering::Relaxed) {
-                            Ok(_) => {
-                                let v = replace(&mut node.value, Option::None);
-                                node.id.store(0, Ordering::Relaxed);
-                                break v
-                            },
-                            Err(_) => {
-                            }
-                        }
+                        self.sequence_number.counter.store(s_index + 1, Ordering::Relaxed);
+                        let v = replace(&mut node.value, Option::None);
+                        node.id.store(0, Ordering::Relaxed);
+                        break v
                     } else {
                         i = i + 1;
                         if i > 1_000_000_000 {
@@ -146,46 +155,41 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
             if p_index > s_index {
                 let request = limit.min(elements_left);
                 // Have to do this a little bit different.
-                match self.sequence_number.counter.compare_exchange_weak(s_index, s_index + request, Ordering::Relaxed, Ordering::Relaxed) {
-                    Ok(_) => {
-                        for i in 0..request {
-                            let mut fail_count: u64 = 0;
-                            loop {
-                                let pos = self.pos(s_index + i);
-                                let node = unsafe {self.ring_buffer.get_unchecked_mut(pos)}; 
-                                let node_id = node.id.load(Ordering::Acquire);
-                                if node_id == s_index + i {
-                                    let v = replace(&mut node.value, Option::None);
-                                    node.id.store(0, Ordering::Relaxed);
-                                    match v {
-                                        None => {
-                                            panic!("Found a None!")
-                                        },
-                                        Some(t_value) => {
-                                            act(t_value)
-                                        }
-                                    }
-                                    break
-                                } else {
-                                    thread::yield_now();
-                                    fail_count = fail_count + 1;
-                                    if fail_count > 1_000_000_000 {
-                                        panic!("Failed to get the node!");
-                                    }
+                self.sequence_number.counter.store(s_index + request, Ordering::Relaxed);
+                for i in 0..request {
+                    let mut fail_count: u64 = 0;
+                    loop {
+                        let pos = self.pos(s_index + i);
+                        let node = unsafe {self.ring_buffer.get_unchecked_mut(pos)}; 
+                        let node_id = node.id.load(Ordering::Acquire);
+                        if node_id == s_index + i {
+                            let v = replace(&mut node.value, Option::None);
+                            node.id.store(0, Ordering::Relaxed);
+                            match v {
+                                None => {
+                                    panic!("Found a None!")
+                                },
+                                Some(t_value) => {
+                                    act(t_value)
                                 }
                             }
+                            break
+                        } else {
+                            thread::yield_now();
+                            fail_count = fail_count + 1;
+                            if fail_count > 1_000_000_000 {
+                                panic!("Failed to get the node!");
+                            }
                         }
-                        break request
-                    },
-                    Err(_) => {
                     }
                 }
-                break 0
+                break request
             } else {
                 break 0
             }
         }
     }
+
 
     /// Offers a value to the queue.  Returns true if the value was successfully added.
     /// # Arguments
@@ -224,9 +228,9 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
 mod tests {
 
     use std::thread;
-    use crate::queue::mpmc_queue::{
-        MpmcQueue,
-        MpmcQueueWrap
+    use crate::queue::mpsc_queue::{
+        MpscQueue,
+        MpscQueueWrap
     };
     use crate::queue::ConcurrentQueue;
     use std::sync::Arc;
@@ -234,7 +238,7 @@ mod tests {
 
     #[test]
     pub fn create_queue_test() {
-        let mut queue: MpmcQueue<u64> = MpmcQueue::new(128);
+        let mut queue: MpscQueue<u64> = MpscQueue::new(128);
         assert_eq!(128, queue.ring_buffer.len());
 
         queue.offer(1);
@@ -245,7 +249,8 @@ mod tests {
     #[test]
     pub fn use_thread_queue_test() {
         time_test!();
-        let queue: Arc<MpmcQueueWrap<usize>> = Arc::new(MpmcQueueWrap::new(10_000_000));
+        let (write, send) = MpscQueueWrap::<usize>::new(10_000_000); 
+        let queue: Arc<MpscQueueWrap<usize>> = Arc::new(write);
         let write_thread_num = 2;
         let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num); 
         let spins: usize = 100_000_000;
@@ -261,30 +266,27 @@ mod tests {
             write_threads.push(write_thread);
         }
 
-        let thread_num: usize = 2;
+        let thread_num: usize = 1;
         let mut read_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(thread_num);
         let read_spins = spins / thread_num;
-        for _ in 0..thread_num {
-            let read_queue = queue.clone();
-            let read_thread = thread::spawn(move || {
-                let mut count = 0;
-                loop {
-                    let result = read_queue.poll();
-                    match result {
-                        Some(_) => {
-                            count = count + 1;
-                            if count == read_spins {
-                                break
-                            }
-                        },
-                        _ => {
-                            thread::yield_now();
+        let read_thread = thread::spawn(move || {
+            let mut count = 0;
+            loop {
+                let result = send.poll();
+                match result {
+                    Some(_) => {
+                        count = count + 1;
+                        if count == read_spins {
+                            break
                         }
+                    },
+                    _ => {
+                        thread::yield_now();
                     }
-                } 
-            });
-            read_threads.push(read_thread);
-        }
+                }
+            } 
+        });
+        read_threads.push(read_thread);
 
         for num in 0..write_thread_num {
             write_threads.remove(write_thread_num - num - 1).join().unwrap();
@@ -297,7 +299,8 @@ mod tests {
     #[test]
     pub fn use_thread_queue_test_drain() {
         time_test!();
-        let queue: Arc<MpmcQueueWrap<usize>> = Arc::new(MpmcQueueWrap::new(10_000_000));
+        let (write, send) = MpscQueueWrap::<usize>::new(10_000_000); 
+        let queue: Arc<MpscQueueWrap<usize>> = Arc::new(write);
         let write_queue = queue.clone();
         let spins: usize = 100_000_000;
         let write_thread = thread::spawn(move || {
@@ -308,27 +311,24 @@ mod tests {
             }
         });
 
-        let thread_num: usize = 2;
+        let thread_num: usize = 1;
         let mut read_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(thread_num);
         let read_spins = spins / thread_num;
-        for _ in 0..thread_num {
-            let read_queue = queue.clone();
-            let read_thread = thread::spawn(move || {
-                let mut count = 0;
-                loop {
-                    let result = read_queue.drain(|_| {
-                    }, 1000);
-                    count = count + result;
-                    if count == 0 {
-                        thread::yield_now();
-                    }
-                    if count > (read_spins - 1000 * thread_num) {
-                        break
-                    }
-                } 
-            });
-            read_threads.push(read_thread);
-        }
+        let read_thread = thread::spawn(move || {
+            let mut count = 0;
+            loop {
+                let result = send.drain(|_| {
+                }, 1000);
+                count = count + result;
+                if count == 0 {
+                    thread::yield_now();
+                }
+                if count > (read_spins - 1000 * thread_num) {
+                    break
+                }
+            } 
+        });
+        read_threads.push(read_thread);
 
         write_thread.join().unwrap();
         for num in 0..thread_num {

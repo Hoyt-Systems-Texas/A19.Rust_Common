@@ -1,4 +1,15 @@
+use std::sync::atomic::AtomicUsize;
+
 pub mod mpmc_queue;
+pub mod mpsc_queue;
+
+pub struct PaddedUsize {
+    // Make sure we are on one cache line.
+    #[warn(dead_code)]
+    padding: [usize; 31],
+    pub counter: AtomicUsize
+}
+
 
 pub trait ConcurrentQueue<T> {
 
