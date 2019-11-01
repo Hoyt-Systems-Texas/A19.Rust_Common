@@ -6,8 +6,17 @@ pub mod mpsc_queue;
 pub struct PaddedUsize {
     // Make sure we are on one cache line.
     #[warn(dead_code)]
-    padding: [usize; 31],
+    padding: [usize; 15], 
     pub counter: AtomicUsize
+}
+
+impl PaddedUsize {
+    pub fn new(initial_value: usize) -> Self {
+        PaddedUsize {
+            padding: [0; 15],
+            counter: AtomicUsize::new(0)
+        }
+    } 
 }
 
 

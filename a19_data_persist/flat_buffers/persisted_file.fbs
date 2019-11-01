@@ -1,0 +1,24 @@
+namespace a19_data_persist.file;
+
+// Represents a header in a file.  Due to the limit of Flatbuffers the max event size is 2GB.
+// Since most files have some way to handle file corruption there isn't any point of having this 
+// Information on disk.
+// ---------------------------------------------------------------- 0
+// Message Size (Total Size)      | Version       | Type
+// ---------------------------------------------------------------- 64
+// Message Id 
+// ---------------------------------------------------------------- 128
+// Time in MS
+// ---------------------------------------------------------------- 192
+// Message Body
+// ---------------------------------------------------------------- Body
+// Message Size (Total Size)  Allow use to go backwards 
+// ---------------------------------------------------------------- End - 32
+table Message {
+    message_size: uint32;
+    version: uint16;
+    type: uint16;
+    time: uint64;
+    message: [uint8];
+    message_size_end: uint32;
+}

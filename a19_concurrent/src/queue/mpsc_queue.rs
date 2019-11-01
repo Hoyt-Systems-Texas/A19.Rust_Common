@@ -85,11 +85,11 @@ impl<T> MpscQueue<T> {
             capacity: power_of_2,
             mask: power_of_2 - 1,
             sequence_number: PaddedUsize {
-                padding: [0; 31],
+                padding: [0; 15],
                 counter: AtomicUsize::new(1)
             },
             producer: PaddedUsize {
-                padding: [0; 31],
+                padding: [0; 15],
                 counter: AtomicUsize::new(1)
             }
         };
@@ -249,11 +249,11 @@ mod tests {
     #[test]
     pub fn use_thread_queue_test() {
         time_test!();
-        let (write, send) = MpscQueueWrap::<usize>::new(10_000_000); 
+        let (write, send) = MpscQueueWrap::<usize>::new(1_000_000); 
         let queue: Arc<MpscQueueWrap<usize>> = Arc::new(write);
         let write_thread_num = 2;
         let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num); 
-        let spins: usize = 100_000_000;
+        let spins: usize = 10_000_000;
         for _ in 0..write_thread_num {
             let write_queue = queue.clone();
             let write_thread = thread::spawn(move || {
@@ -299,10 +299,10 @@ mod tests {
     #[test]
     pub fn use_thread_queue_test_drain() {
         time_test!();
-        let (write, send) = MpscQueueWrap::<usize>::new(10_000_000); 
+        let (write, send) = MpscQueueWrap::<usize>::new(1_000_000); 
         let queue: Arc<MpscQueueWrap<usize>> = Arc::new(write);
         let write_queue = queue.clone();
-        let spins: usize = 100_000_000;
+        let spins: usize = 10_000_000;
         let write_thread = thread::spawn(move || {
             for i in 0..spins {
                 while !write_queue.offer(i) {
