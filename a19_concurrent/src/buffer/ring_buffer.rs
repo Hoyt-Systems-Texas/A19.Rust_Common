@@ -268,7 +268,7 @@ impl ManyToOneBufferInt {
                         Ordering::SeqCst,
                         Ordering::Relaxed) {
                         Ok(_) => {
-                            break Some(tail)
+                            break Some(tail_index)
                         },
                         Err(_) => {
                             // Around we go.
@@ -299,5 +299,33 @@ mod tests {
             assert_eq!(1, msg_type_id);
         }, 1000);
         buffer.read_completed(&result);
+    }
+
+    #[test]
+    pub fn fill_to_end_test() {
+        let mut buffer = ManyToOneBufferInt::new(0x40);
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16);
+        for i in 0..4 {
+            let written = buffer.write(
+                1,
+                &bytes);
+            assert!(written);
+        }
+        let written = buffer.write(
+            1,
+            &bytes);
+        assert!(!written);
+        let result = buffer.read(|msg_type_id, buffer| {
+            assert_eq!(1, msg_type_id);
+        }, 1000);
+        assert_eq!(64, result.bytes_read);
+        assert_eq!(4, result.messages_read);
+        buffer.read_completed(&result);
+        for i in 0..4 {
+            let written = buffer.write(
+                1,
+                &bytes);
+            assert!(written);
+        }
     }
 }
