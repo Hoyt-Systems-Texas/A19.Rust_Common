@@ -106,6 +106,18 @@ pub trait DirectByteBuffer {
     /// `position` - The position of the bytes to start.
     /// `length` - The length of the bytes to get.
     fn as_bytes_mut<'a>(&'a mut self, position: &usize, length: &usize) -> &'a mut [u8];
+
+    /// Set bytes on the buffer.
+    /// # Arguments
+    /// `position` - The position to starting writing the bytes to.
+    /// `value` - The value to write.
+    fn set_bytes(&mut self, position: &usize, length: &usize, value: u8);
+
+    /// Writes a slice to the byte buffer.
+    /// # Arguments
+    /// `position` - The position to write the buffers to.
+    /// `bytes` - The bytes to write to the buffer.
+    fn write_bytes(&mut self, position: &usize, bytes: &[u8]);
 }
 
 #[cfg(test)]

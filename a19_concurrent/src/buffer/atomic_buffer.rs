@@ -216,6 +216,21 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     fn max_message_size(&self) -> usize {
         self.max_message_size
     }
+
+    fn set_bytes(&mut self, position: &usize, length: &usize, value: u8) {
+        for b in self.as_bytes_mut(position, length).iter_mut() {
+            *b = value;
+        }
+    }
+
+    fn write_bytes(&mut self, position: &usize, bytes: &[u8]) {
+        for (d, s) in self.as_bytes_mut(
+            position,
+            &bytes.len()).iter_mut().zip(
+            bytes.iter()) {
+                *d = *s;
+            }
+    }
 }
 
 /// Have to use fence for now.  Need to find out if this is good enough for the compiler to not
