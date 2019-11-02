@@ -178,7 +178,7 @@ impl RingBuffer for ManyToOneBufferInt {
             }
         };
         BytesReadInfo {
-            start: head,
+            start: head_index,
             bytes_read,
             messages_read
         }
@@ -249,7 +249,7 @@ impl ManyToOneBufferInt {
                                 fence(Ordering::Release);
                                 
                                 self.buffer.put_i32(
-                                    &message_body_offset(&tail_index),
+                                    &message_type_offset(&tail_index),
                                     PADDING_MESSAGE_TYPE);
                                 self.buffer.put_i32_volatile(
                                     &size_offset(&tail_index),
@@ -327,5 +327,36 @@ mod tests {
                 &bytes);
             assert!(written);
         }
+    }
+
+    #[test]
+    pub fn padding_test() {
+        let mut buffer = ManyToOneBufferInt::new(0x40);
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        for i in 0..2 {
+            let written = buffer.write(
+                1,
+                &bytes);
+            assert!(written);
+        }
+        let result = buffer.read(|msg_type_id, buffer| {
+            assert_eq!(1, msg_type_id);
+        }, 1000);
+        assert_eq!(2, result.messages_read);
+        buffer.read_completed(&result);
+        let written = buffer.write(
+            1,
+            &bytes);
+        assert!(written);
+        let result = buffer.read(|msg_type_id, buffer| {
+            assert_eq!(1, msg_type_id);
+        }, 1000);
+        assert_eq!(0, result.messages_read);
+        buffer.read_completed(&result);
+        let result = buffer.read(|msg_type_id, buffer| {
+            assert_eq!(1, msg_type_id);
+        }, 1000);
+        assert_eq!(1, result.messages_read);
+        buffer.read_completed(&result);
     }
 }
