@@ -1,4 +1,4 @@
-#[path="../target/a19_data_persist/message/persisted_file_generated.rs"]
+mod raft;
 
 #[cfg(test)]
 mod tests {

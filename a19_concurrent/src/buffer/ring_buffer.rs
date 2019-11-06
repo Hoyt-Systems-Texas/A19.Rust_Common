@@ -19,7 +19,6 @@ struct ManyToOneBufferInt {
 
 const HEADER_SIZE: usize = 8;
 const ALIGNMENT: usize = HEADER_SIZE;
-const SIZE_OFFSET: usize = 0;
 const MESSAGE_TYPE_OFFSET: usize = 4;
 const MESSAGE_BODY_OFFSET: usize = 8;
 const PADDING_MESSAGE_TYPE: i32 = -1;
@@ -43,9 +42,16 @@ fn message_body_offset(position: &usize) -> usize {
 }
 
 /// Buffer format
-/// ---------------------------------------------------------------- 0
-/// Message Size                   | Message Type
-/// ---------------------------------------------------------------- 64
+///  0                   1                   2                   3
+///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+/// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// | Message Size                                                  |
+/// +---------------------------------------------------------------+ 32
+/// | Message Type                                                  |
+/// +---------------------------------------------------------------+ 64
+/// |                   Message Body                                ...
+/// ...                                                             |
+/// +---------------------------------------------------------------+
 pub trait RingBuffer {
 
     /// Gets the capcity of the buffer.
@@ -64,7 +70,7 @@ pub trait RingBuffer {
     fn read<'a>(
         &'a mut self,
         act: fn(msgType: i32, bytes: &'a [u8]),
-        limit: usize) -> BytesReadInfo;
+        limit: u32) -> BytesReadInfo;
 
     /// The maximum length of a message.
     fn max_message_length(&self) -> usize;
@@ -143,7 +149,7 @@ impl RingBuffer for ManyToOneBufferInt {
     fn read<'a>(
         &'a mut self,
         act: fn(msgType:i32, bytes: &'a [u8]),
-        limit: usize) -> BytesReadInfo {
+        limit: u32) -> BytesReadInfo {
         let capcity = self.capacity();
         let head = self.consumer.counter.load(Ordering::Relaxed);
         let head_index = head & self.mask;
@@ -173,6 +179,9 @@ impl RingBuffer for ManyToOneBufferInt {
                             message_type,
                             byte_arrays);
                         messages_read += 1;
+                        if messages_read >= limit {
+                            break
+                        }
                     }
                 }
             }

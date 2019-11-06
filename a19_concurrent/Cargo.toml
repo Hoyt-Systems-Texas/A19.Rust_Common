@@ -10,3 +10,6 @@ edition = "2018"
 a19_core = { path = "../a19_core" }
 time-test = "0.2.2"
 byteorder = "1.3"
+
+[dev-dependencies]
+loom = "0.2.12"
