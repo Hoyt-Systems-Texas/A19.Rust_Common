@@ -1,4 +1,5 @@
 mod raft;
+mod file;
 
 #[cfg(test)]
 mod tests {

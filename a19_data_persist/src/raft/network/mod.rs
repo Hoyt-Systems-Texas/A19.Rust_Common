@@ -5,9 +5,9 @@
 //!
 //! The ip address of the server and/or their names of the servers.  Requires a registration
 //! service and log replication.  The goal is to only have 2 nodes per a location.  Every message
-//! needs the size of the frame.
+//! needs the size of the frame.  To indicate a bad frame due to node failure, set the message
+//! length in the buffer to u32::MAX.
 //!
-//! 
 //! # Basic Message Layout
 //!
 //! Every message starts with the following header.  Each message is aligned on a 32 byte
@@ -116,6 +116,30 @@
 //!
 //! ```
 //!
+//! # Commit Frame
+//!
+//! ```text
+//!  0                   1                   2                   3
+//!  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//! +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//! | Frame size                                                    |
+//! +---------------+---------------+-------------------------------+ 32
+//! | Version       | Flags         | Type                          |        
+//! +---------------+---------------+-------------------------------+ 64
+//! | Server Id                                                     |
+//! +---------------------------------------------------------------+ 96
+//! | Term Id                                                       | 
+//! +---------------------------------------------------------------+ 128
+//! |                                                               |
+//! |                                                               | 160
+//! |                                                               |
+//! |                                                               | 192
+//! |                                                               |
+//! |                                                               | 224
+//! | Not Used                                                      |
+//! +---------------------------------------------------------------+ 256
+//!
+//! ```
 use std::time::Duration;
 
 /// Represents a socket to send data to.

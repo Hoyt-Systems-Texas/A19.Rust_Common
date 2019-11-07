@@ -13,7 +13,7 @@ a19_core = { path = "../a19_core" }
 a19_concurrent = { path = "../a19_concurrent" }
 
 [dependencies.zmq]
-version = "0.9.1"
+version = "0.9"
 features = ["vendored"]
 
 [build-dependencies]
