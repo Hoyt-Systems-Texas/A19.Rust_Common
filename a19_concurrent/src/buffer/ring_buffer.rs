@@ -101,7 +101,6 @@ impl ManyToOneBufferInt {
             mask
         }
     }
-
 }
 
 impl RingBuffer for ManyToOneBufferInt {

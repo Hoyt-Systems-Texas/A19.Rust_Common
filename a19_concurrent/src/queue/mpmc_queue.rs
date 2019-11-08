@@ -247,7 +247,7 @@ mod tests {
         let queue: Arc<MpmcQueueWrap<usize>> = Arc::new(MpmcQueueWrap::new(1_000_000));
         let write_thread_num = 2;
         let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num); 
-        let spins: usize = 100_000_000;
+        let spins: usize = 10_000_000;
         for _ in 0..write_thread_num {
             let write_queue = queue.clone();
             let write_thread = thread::spawn(move || {
