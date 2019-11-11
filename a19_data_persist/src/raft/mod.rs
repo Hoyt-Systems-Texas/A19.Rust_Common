@@ -354,7 +354,6 @@ impl PersistedMessageFile {
 mod tests {
     use std::fs::remove_dir_all;
     use crate::raft::{PersistedMessageFile, FilePair};
-    use std::fs::{remove_dir_all};
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
