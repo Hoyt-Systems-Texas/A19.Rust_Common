@@ -46,13 +46,16 @@ pub mod network;
 
 const EVENT_FILE_POSTFIX: &str = "events";
 const COMMIT_FILE_POSTIX: &str = "commit";
+const HEADER_SIZE: u64 = 512;
 
 use memmap::MmapMut;
 use std::fs::{File, create_dir_all, remove_file};
+use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
 use std::fs::read_dir;
+use std::fs::*;
 use std::io::{Error, ErrorKind};
 use std::io;
-use std::io::BufWriter;
+use std::io::{BufWriter, BufReader};
 use std::io::prelude::*;
 use std::path::{Path, MAIN_SEPARATOR};
 use std::vec::Vec;
@@ -324,10 +327,32 @@ impl PersistedMessageFile {
             current_count = current_count - value.len();
         }
     }
+
+    /// Used to get the file state
+    ///
+    /// # Arguments
+    /// `message_file` - The name of the message file.
+    /// `commit_file` - The file containing the commit info.
+    /// `max_length` - The maximum length of the `message_file`.
+    fn file_state(
+        message_file: &str,
+        commit_file: &str,
+        max_length: &usize) -> io::Result<FileState> {
+        let message_file = File::open(message_file)?;
+        let metaData = message_file.metadata()?;
+        if metaData.len() >= HEADER_SIZE {
+            let mut reader = BufReader::new(message_file);
+            Ok(FileState::CLEANING)
+        } else {
+            // The file is to small to be a commit file.  Need to decide what to do.
+            Ok(FileState::READY)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs::remove_dir_all;
     use crate::raft::{PersistedMessageFile, FilePair};
     use std::fs::{remove_dir_all};
 
