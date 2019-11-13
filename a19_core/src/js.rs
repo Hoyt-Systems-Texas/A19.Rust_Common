@@ -1,6 +1,7 @@
 //! Contains helpers for working with JavaScript.
 use rand::{thread_rng, RngCore};
 
+/// The maximum integer in javascript is 2^54.
 const JS_MAX_INT_MASK: u64 = 0b00011111_11111111_11111111_11111111_11111111_11111111_11111111;
 
 /// Used to get the next javascript random number generator.
