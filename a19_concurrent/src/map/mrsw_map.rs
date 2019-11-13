@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::cmp::Eq;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering, AtomicPtr};
 use std::thread;
 
 const READER: u32 = 1;
@@ -50,6 +50,7 @@ unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> { }
 
 /// The multi reader, single writer map.
 pub struct MrswMap<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
+    current_reader: AtomicPtr<MapContainer<K, V, E>>,
     /// The first map.
     map1: MapContainer<K, V, E>,
     /// The second map.
@@ -69,12 +70,14 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
         apply_change: TApplyChange) -> Self {
+        let mut reader = MapContainer::new(
+            map1,
+            READER,
+            1_024);
+        let ptr = AtomicPtr::<MapContainer<K, V, E>>::new(&mut reader);
         MrswMap {
-            map1: MapContainer::new(
-                map1,
-                READER,
-                1_024
-            ),
+            current_reader: ptr,
+            map1: reader,
             map2: MapContainer::new(
                 map2,
                 WRITER,
@@ -139,8 +142,10 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
         };
         // Full memory barrier hear so we don't accidently have a thread read the wrong writer
         // value.  Need to do this immediately so we 
-        writer.state.store(READER, Ordering::SeqCst);
-        reader.state.store(WRITER, Ordering::SeqCst);
+        writer.state.store(READER, Ordering::Relaxed);
+        reader.state.store(WRITER, Ordering::Relaxed);
+        // Need to do an atomic store of the current writer.
+        self.current_reader.store(reader, Ordering::SeqCst);
         loop {
             // Wait for the reader count to go to zero.
             if reader.reader_count.load(Ordering::Relaxed) == 0 {
@@ -161,7 +166,6 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
                     break
                 }
             }
-
         }
     }
 }
@@ -176,14 +180,24 @@ pub trait ReaderMap<K: Hash + Eq, V> {
     /// `act` - The action to run with the value that returns the specified result.
     fn get<R>(&mut self, key: K, act: fn(Option<&V>) -> R) -> R;
 }
+impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> for MrswMap<K, V, E, TApplyChange> {
 
+    fn get<R>(&mut self, key: K, act: fn(Option<&V>) -> R) -> R {
+        let reader = self.current_reader.load(Ordering::SeqCst);
+        unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
+        let elem = unsafe{(*reader).map.get(&key)};
+        let r = act(elem);
+        unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
+        r
+    }
+}
 unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMap<K, V, E, TApplyChange> { }
 unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMap<K, V, E, TApplyChange> { }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use crate::map::mrsw_map::{MrswMap, WriterMap, ApplyChanges};
+    use crate::map::mrsw_map::{MrswMap, WriterMap, ApplyChanges, ReaderMap};
 
     enum TestEvent {
         Add{key: u64, value: String}
@@ -217,5 +231,16 @@ mod tests {
         );
         map.add_event(TestEvent::Add{key: 1, value: "Hi".to_owned()});
         map.commit();
+        let r = map.get(1, |e| {
+            match e {
+                Some(r) => {
+                    r.clone()
+                },
+                None => {
+                    "".to_owned()
+                }
+            }
+        });
+        assert_eq!("Hi", &r);
     }
 }
