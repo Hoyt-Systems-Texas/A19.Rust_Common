@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::cmp::Eq;
@@ -45,6 +47,24 @@ impl<K: Hash + Eq, V, E> MapContainer<K, V, E> {
     }
 }
 
+/// A wrapper for the reader so we can have proper threading access.
+pub struct MrswMapReader<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
+    map: Arc<UnsafeCell<MrswMap<K, V, E, TApplyChange>>>,
+}
+
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMapReader<K, V, E, TApplyChange> {}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMapReader<K, V, E, TApplyChange> {}
+
+impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapReader<K, V, E, TApplyChange> {
+
+    pub fn get<R>(&self, key: K, act: fn(Option<&V>) -> R) -> R {
+        unsafe {
+            let map = &mut *self.map.get();
+            map.get(key, act)
+        }
+    }
+}
+
 unsafe impl<K: Hash + Eq, V, E> Sync for MapContainer<K, V, E> { }
 unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> { }
 
@@ -69,13 +89,13 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
     pub fn new(
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
-        apply_change: TApplyChange) -> Self {
+        apply_change: TApplyChange) -> (MrswMapReader<K, V, E, TApplyChange>, MrswMapWriter<K, V, E, TApplyChange>) {
         let mut reader = MapContainer::new(
             map1,
             READER,
             1_024);
         let ptr = AtomicPtr::<MapContainer<K, V, E>>::new(&mut reader);
-        MrswMap {
+        let mrsp_map = Arc::new(UnsafeCell::new(MrswMap {
             current_reader: ptr,
             map1: reader,
             map2: MapContainer::new(
@@ -84,7 +104,15 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
                 1_024
             ),
             apply_change
-        }
+        }));
+        (
+            MrswMapReader {
+                map: mrsp_map.clone(),
+            },
+            MrswMapWriter {
+                map: mrsp_map
+            }
+        )
     }
 
     /// Used to apply a change to a map.
@@ -108,6 +136,30 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
         map.event_stream.push_back(event);
     }
 
+}
+
+pub struct MrswMapWriter<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
+    map: Arc<UnsafeCell<MrswMap<K, V, E, TApplyChange>>>
+}
+
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMapWriter<K, V, E, TApplyChange> {}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMapWriter<K, V, E, TApplyChange> {}
+
+impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapWriter<K, V, E, TApplyChange> {
+    
+    pub fn add_event(&self, event: E) {
+        unsafe {
+            let map = &mut *self.map.get();
+            map.add_event(event);
+        }    
+    }
+
+    pub fn commit(&self) {
+        unsafe {
+            let map = &mut *self.map.get();
+            map.commit();
+        }
+    }
 }
 
 
@@ -224,14 +276,14 @@ mod tests {
         let apply_change = TestApplyChange {
 
         };
-        let mut map = MrswMap::new(
+        let (reader, writer) = MrswMap::new(
             HashMap::with_capacity(10),
             HashMap::with_capacity(10),
             apply_change
         );
-        map.add_event(TestEvent::Add{key: 1, value: "Hi".to_owned()});
-        map.commit();
-        let r = map.get(1, |e| {
+        writer.add_event(TestEvent::Add{key: 1, value: "Hi".to_owned()});
+        writer.commit();
+        let r = reader.get(1, |e| {
             match e {
                 Some(r) => {
                     r.clone()

@@ -26,7 +26,7 @@ unsafe impl<T> Send for MpscQueueWrap<T> {}
 
 impl<T> MpscQueueWrap<T> {
 
-    fn new(queue_size: usize) -> (MpscQueueWrap<T>, MpscQueueReceive<T>) {
+    pub fn new(queue_size: usize) -> (MpscQueueWrap<T>, MpscQueueReceive<T>) {
         let queue = Arc::new(UnsafeCell::new(MpscQueue::new(queue_size)));
         let send_queue = queue.clone();
         (MpscQueueWrap {
@@ -37,7 +37,7 @@ impl<T> MpscQueueWrap<T> {
         })
     }
 
-    fn offer(&self, v: T) -> bool {
+    pub fn offer(&self, v: T) -> bool {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.offer(v)
@@ -49,14 +49,14 @@ unsafe impl<T> Send for MpscQueueReceive<T> {}
 
 impl <T> MpscQueueReceive<T> {
 
-    fn poll(&self) -> Option<T> {
+    pub fn poll(&self) -> Option<T> {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.poll()
         }
     }
 
-    fn drain(&self, act: fn(T), limit: usize) -> usize {
+    pub fn drain(&self, act: fn(T), limit: usize) -> usize {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.drain(act, limit)
