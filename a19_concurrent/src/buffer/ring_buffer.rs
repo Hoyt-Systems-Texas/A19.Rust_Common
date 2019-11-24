@@ -131,7 +131,7 @@ impl RingBuffer for ManyToOneBufferInt {
                     self.buffer.write_bytes(
                         &message_body_offset(&i),
                         buffer);
-                    self.buffer.put_i32_volatile(&size_offset(&i), record_length_i);
+                    self.buffer.put_i32_volatile(&size_offset(&i), &record_length_i);
                     true
                 },
                 None => {
@@ -261,7 +261,7 @@ impl ManyToOneBufferInt {
                                     PADDING_MESSAGE_TYPE);
                                 self.buffer.put_i32_volatile(
                                     &size_offset(&tail_index),
-                                    padding);
+                                    &padding);
                                 break Some(0)
                             },
                             Err(_) => {

@@ -1,5 +1,6 @@
 pub mod atomic_buffer;
 pub mod ring_buffer;
+pub mod mmap_buffer;
 
 /// Used to find the complement of power of 2.
 /// # Arguments

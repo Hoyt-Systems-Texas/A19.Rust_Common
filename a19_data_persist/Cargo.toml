@@ -11,6 +11,7 @@ memmap = "0.7"
 flatbuffers = "0.6"
 a19_core = { path = "../a19_core" }
 a19_concurrent = { path = "../a19_concurrent" }
+futures = "0.1" # Need to use the old versin for actix.
 
 [dependencies.zmq]
 version = "0.9"
