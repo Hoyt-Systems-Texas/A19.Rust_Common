@@ -4,7 +4,7 @@ use std::path::Path;
 use std::io::Result;
 use std::sync::atomic::{fence, Ordering};
 use byteorder::{ByteOrder, BigEndian};
-use crate::buffer::{ DirectByteBuffer, align };
+use crate::buffer:: DirectByteBuffer;
 use crate::buffer::atomic_buffer::{calculate_offset_32, calculate_offset_16, calculate_offset_long, AtomicByteBuffer};
 use memmap::MmapMut;
 
@@ -16,14 +16,6 @@ struct MemoryMappedInt {
     size: usize,
     max_message_size: usize
 }
-
-/// A thread safe memory mapped file.
-pub struct MemoryMapped {
-    mmap: UnsafeCell<MemoryMappedInt>
-}
-
-unsafe impl Sync for MemoryMapped {}
-unsafe impl Send for MemoryMapped {}
 
 impl MemoryMappedInt {
     
@@ -295,10 +287,10 @@ impl AtomicByteBuffer for MemoryMappedInt {
 #[cfg(test)]
 mod tests {
 
-    use std::fs::{remove_file};
-    use std::path::{Path};
-    use crate::buffer::mmap_buffer::{MemoryMappedInt};
-    use crate::buffer::atomic_buffer::{AtomicByteBuffer};
+    use std::fs::remove_file;
+    use std::path::Path;
+    use crate::buffer::mmap_buffer::MemoryMappedInt;
+    use crate::buffer::atomic_buffer::AtomicByteBuffer;
 
     #[test]
     pub fn create_test() {
