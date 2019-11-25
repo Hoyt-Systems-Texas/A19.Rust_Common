@@ -2,6 +2,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
 use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::{align};
+use std::sync::atomic::{ fence, Ordering };
 use std::path::Path;
 
 /// Represents the storage of files.   It supports a singler writer with multiple readers.  This is
@@ -37,10 +38,14 @@ const NOOP_MESSAGE_TYPE: i32 = -2;
 impl MessageFileStore {
 
     /// Creates a new file store.
+    /// # Arguments
+    /// path - The path to crate the file.
+    /// file_size - The size of the file to crate.  This is preallocated for performance reasons.
     pub unsafe fn new<P: AsRef<Path>>(
         path: &P,
         file_size: usize) -> std::io::Result<Self> {
-        let buffer = MemoryMappedInt::new(path, file_size)?;
+        // Need to make sure the file size is aligned correctly.
+        let buffer = MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?;
         Ok(MessageFileStore {
             buffer
         })
@@ -56,7 +61,8 @@ pub enum Error {
     Full,
     InvalidMessageType(i32),
     FileError(std::io::Error),
-    PositionOutOfRange(usize)
+    PositionOutOfRange(usize),
+    NotEnoughSpace{message_size: u32, position: usize, capacity: usize, remaining: usize}
 }
 
 /// Represents the storage of messages.
@@ -72,12 +78,12 @@ pub trait MessageStore {
     /// # Arguments
     /// `pos` - The starting position of the message.
     /// `act` - The action to run.
-    fn read<'a>(&self,
+    fn read<'a>(&'a self,
         pos: &usize,
         act: fn(
             msg_type: i32,
             message_id: u64,
-            bytes: &'a [u8])) -> bool;
+            bytes: &'a [u8])) -> Result<()>;
 
     /// Writes a message to the buffer.
     /// # Arguments
@@ -153,13 +159,35 @@ impl MessageStore for MessageFileStore {
     /// # Arguments
     /// `pos` - The starting position of the message.
     /// `act` - The action to run.
-    fn read<'a>(&self,
+    fn read<'a>(&'a self,
         pos: &usize,
         act: fn(
             msg_type: i32,
             message_id: u64,
-            bytes: &'a [u8])) -> bool {
-        false
+            bytes: &'a [u8])) -> Result<()> {
+        if *pos > self.size() - ALIGNMENT {
+            Err(Error::PositionOutOfRange(*pos))
+        } else {
+            let size = self.buffer.get_u32(pos);
+            let aligned = align(size as usize, ALIGNMENT);
+            // Check to see if we have enough space.
+            let remaining = self.buffer.capacity() - *pos;
+            if remaining < aligned {
+                Err(Error::NotEnoughSpace{
+                    capacity: self.buffer.capacity(), 
+                    message_size: size,
+                    position: *pos,
+                    remaining})
+            } else {
+                fence(Ordering::Acquire);
+                let message_type = self.buffer.get_i32(&MessageFileStore::calculate_msg_type_pos(pos));
+                let message_id = self.buffer.get_u64(&MessageFileStore::calculate_message_id_pos(pos));
+                let body_size = size as usize - HEADER_SIZE;
+                let bytes = self.buffer.get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
+                act(message_type, message_id, bytes);
+                Ok(())
+            }
+        }
     }
 
     /// Writes a message to the buffer.
@@ -224,7 +252,12 @@ mod tests {
         };
         
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
-        store.write(&0, &1, &1, &bytes[0..8]).unwrap();
+        store.write(&0, &1, &2, &bytes[0..8]).unwrap();
         store.flush().unwrap();
+        store.read(&0, |msg_type, message_id, body| {
+            assert_eq!(msg_type, 1);
+            assert_eq!(message_id, 2);
+            assert_eq!(body.len(), 8);
+        }).unwrap();
     }
 }
