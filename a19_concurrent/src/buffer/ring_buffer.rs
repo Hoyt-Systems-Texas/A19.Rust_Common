@@ -84,6 +84,7 @@ pub trait RingBuffer {
     /// The current size of the buffer.
     fn size(&self) -> usize;
 
+    /// Called when we are done reading the bytes in.
     fn read_completed(&mut self, read_info: &BytesReadInfo);
 
 }

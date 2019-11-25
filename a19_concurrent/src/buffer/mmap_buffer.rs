@@ -9,7 +9,7 @@ use crate::buffer::atomic_buffer::{calculate_offset_32, calculate_offset_16, cal
 use memmap::MmapMut;
 
 /// The internal implementation of the memory mapped buffer.
-struct MemoryMappedInt {
+pub struct MemoryMappedInt {
 
     file: File,
     mmap: MmapMut,
@@ -17,12 +17,15 @@ struct MemoryMappedInt {
     max_message_size: usize
 }
 
+unsafe impl Sync for MemoryMappedInt {}
+unsafe impl Send for MemoryMappedInt {}
+
 impl MemoryMappedInt {
     
     /// Used to create a new memory mapped file with the specified file handler.
     /// # Arguments
     /// `file` - The file handler to map the buffer to.
-    unsafe fn open(file: File) -> Result<Self> {
+    pub unsafe fn open(file: File) -> Result<Self> {
         let meta_data = file.metadata()?;
         let size = meta_data.len() as usize;
         let max_message_size = size / 64;
@@ -45,7 +48,7 @@ impl MemoryMappedInt {
     /// # Arguments
     /// `path` - The path of the memory mapped file to create.
     /// `buffer_size` - The size of the buffer to create.
-    unsafe fn new<P: AsRef<Path>>(
+    pub unsafe fn new<P: AsRef<Path>>(
         path: &P,
         buffer_size: usize) -> Result<MemoryMappedInt> {
         let file = OpenOptions::new()
@@ -62,6 +65,11 @@ impl MemoryMappedInt {
             size: buffer_size,
             max_message_size
         })
+    }
+
+    /// Forces a flush of the memory mapped file to storage.
+    pub fn flush(&self) -> Result<()>{
+        self.mmap.flush()
     }
 }
 
