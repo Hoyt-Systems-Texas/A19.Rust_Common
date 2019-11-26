@@ -16,6 +16,7 @@ impl MessageFileStoreRead {
     /// Reads a message at a specified location.
     /// # Arguments
     /// `pos` - The position to read in.
+    /// `act` - The action to run for the messages.
     /// # Returns
     /// The position of the next message.
     pub fn read<'a>(&'a self,
@@ -69,7 +70,7 @@ unsafe impl Send for MessageFileStoreWrite {}
 
 /// Represents the storage of files.   It supports a singler writer with multiple readers.  This is
 /// the building blocks for raft protocol.
-struct MessageFileStore {
+pub struct MessageFileStore {
     /// The buffer we are writing to.
     buffer: MemoryMappedInt
 }
@@ -124,11 +125,15 @@ type Result<T> = std::result::Result<T, Error>;
 /// Potential message errors.
 #[derive(Debug)]
 pub enum Error {
+    /// The file is full of messages a new one needs to be created.
     Full,
-    InvalidMessageType(i32),
+    /// There is a file io error.
     FileError(std::io::Error),
+    /// The position is out of the range of the current file.
     PositionOutOfRange(usize),
+    /// No message at the location.
     NoMessage,
+    /// Not enough space to read the message.
     NotEnoughSpace{message_size: u32, position: usize, capacity: usize, remaining: usize}
 }
 
@@ -237,7 +242,7 @@ impl MessageStore for MessageFileStore {
         if *pos > self.size() - ALIGNMENT {
             Err(Error::PositionOutOfRange(*pos))
         } else {
-            fence(Ordering::Acquire);
+            fence(Ordering::Acquire);  // This fence is here so we get the latest value. LoadLoad
             let size = self.buffer.get_u32(pos);
             if size == 0 {
                 Err(Error::NoMessage)
@@ -296,6 +301,8 @@ impl MessageStore for MessageFileStore {
             self.buffer.put_i32(&message_type_pos, *msg_type_id);
             self.buffer.put_u64(&message_id_pos, *message_id);
             self.buffer.write_bytes(&message_body, buffer);
+            // Always write the size last since we are using this to check and we need a StoreStore
+            // barrier here.  IE all of the previous stores need to be completed.
             self.buffer.put_u32_volatile(&message_size_pos, &size);
             Ok(aligned)
         }

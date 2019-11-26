@@ -17,31 +17,6 @@
 //! file_prefix.events.3
 //! file_prefix.commit.3
 //!
-//! ```text
-//!  0                   1                   2                   3
-//!  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-//! +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//! | Term Id                                                       |
-//! +-------------------------------+-------------------------------+ 32
-//! | Version                       |                               |        
-//! +-------------------------------+-------------------------------+ 64
-//! | Server Id                                                     |
-//! +---------------------------------------------------------------+ 96
-//! | Created On Timestamp                                          |
-//! +---------------------------------------------------------------+ 128
-//! +---------------------------------------------------------------+ 160
-//! +---------------------------------------------------------------+ 192
-//! +---------------------------------------------------------------+ 224
-//! +---------------------------------------------------------------+ 256
-//! +---------------------------------------------------------------+ 288
-//! +---------------------------------------------------------------+ 320
-//! +---------------------------------------------------------------+ 352
-//! +---------------------------------------------------------------+ 384
-//! +---------------------------------------------------------------+ 416
-//! +---------------------------------------------------------------+ 448
-//! +---------------------------------------------------------------+ 480
-//! +---------------------------------------------------------------+ 512
-//! ```
 pub mod network;
 
 const EVENT_FILE_POSTFIX: &str = "events";
@@ -49,8 +24,12 @@ const COMMIT_FILE_POSTIX: &str = "commit";
 const HEADER_SIZE: u64 = 512;
 
 use memmap::MmapMut;
+use a19_concurrent::buffer::DirectByteBuffer;
+use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
+use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead};
 use std::fs::{File, create_dir_all, remove_file};
 use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
+use std::sync::Arc;
 use std::fs::read_dir;
 use std::fs::*;
 use std::io::{Error, ErrorKind};
@@ -70,6 +49,12 @@ pub struct MessageInfo<'a> {
     message_body: &'a [u8],
 }
 
+struct FileWriteInfo {
+    file_id: u32,
+    position: usize,
+    length: u32
+}
+
 
 /// Represents a term commited.
 /// Represents whats committed and we only flush after the raft protocol has been update.
@@ -77,47 +62,304 @@ pub struct MessageInfo<'a> {
 ///  0                   1                   2                   3
 ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-/// | Term Id                                                       |
-/// +-------------------------------+-------------------------------+ 32
+/// | Term Id                                                       | 
+/// |                                                               | 32 | 4
+/// |                                                               | 
+/// +-------------------------------+-------------------------------+ 64 | 8
 /// | Version                       | Type                          |        
-/// +-------------------------------+-------------------------------+ 64
+/// +-------------------------------+-------------------------------+ 96 | 12
 /// | Server Id                                                     |
-/// +-------------------------------+-------------------------------+ 96
+/// +---------------------------------------------------------------+ 128 | 16
+/// | Leader Id                                                     |
+/// +-------------------------------+-------------------------------+ 160 | 20
 /// | Commited                      | NOT USED FOR NOW              |
-/// +-------------------------------+-------------------------------+ 128
+/// +-------------------------------+-------------------------------+ 192 | 24
 /// |                                                               |
-/// |               Start Timestamp                                 | 160
+/// |               Start Timestamp                                 | 224 | 28
 /// |                                                               |
-/// +---------------------------------------------------------------+ 192
+/// +---------------------------------------------------------------+ 256 | 32
 /// |                                                               |
-/// |               Commited On Timestamp                           | 224
+/// |               Commited On Timestamp                           | 288 | 36
 /// |                                                               |
-/// +---------------------------------------------------------------+ 256
-/// | Start                                                         |
-/// +---------------------------------------------------------------+ 288
-/// | End                                                           |
-/// +---------------------------------------------------------------+ 320
-/// ...   Note Used                                                 |
-/// |                                                             ...
-/// +---------------------------------------------------------------+ 512
+/// +---------------------------------------------------------------+ 320 | 40
+/// | File Id                                                       |
+/// +---------------------------------------------------------------+ 352 | 44
+/// | File Position Offset                                          |
+/// |                                                               | 384 | 48
+/// |                                                               | 
+/// +---------------------------------------------------------------+ 416 | 52
+/// | Max Message Id                                                |
+/// |                                                               | 448 | 56
+/// |                                                               | 
+/// +---------------------------------------------------------------+ 480 | 60
+/// | Length of Commit                                              |
+/// +---------------------------------------------------------------+ 512 | 64
+/// ..                                                              |
+/// |                                                               ...
+/// +---------------------------------------------------------------+ 1024 | 128
 /// ```
-struct TermCommit {
-    term_id: u32,
+const TERM_ID_OFFSET: usize = 0;
+const VERSION_OFFSET: usize = 8;
+const TYPE_OFFSET: usize = 10;
+const SERVER_OFFSET: usize = 12;
+const LEADER_OFFSET: usize = 16;
+const COMMITED: usize = 20;
+const START_TIMESTAMP: usize = 24;
+const COMMITED_TIMESTAMP: usize = 32;
+const FILE_ID: usize = 40;
+const FILE_POSITION_OFFSET: usize = 44;
+const MAX_MESSAGE_ID: usize = 52;
+const LENGTH_OF_COMMIT: usize = 60;
+
+trait CommitFile {
+    fn set_term(&mut self, pos: &usize, val: &u64) -> &mut Self;
+    fn term(&self, pos: &usize) -> u64;
+    fn set_version(&mut self, pos: &usize, val: &u16) -> &mut Self;
+    fn version(&self, pos: &usize) -> u16;
+    fn set_msg_type(&mut self, pos: &usize, val: &u16) -> &mut Self;
+    fn msg_type(&self, pos: &usize) -> u16;
+    fn set_server(&mut self, pos: &usize, server_id: &u32) -> &mut Self;
+    fn server(&self, pos: &usize) -> u32;
+    fn set_leader(&mut self, pos: &usize, val: &u32) -> &mut Self;
+    fn leader(&self, pos: &usize) -> u32;
+    fn set_commited(&mut self, pos: &usize) -> &mut Self;
+    fn commited(&self, pos: &usize) -> u16;
+    fn set_start_time(&mut self, pos: &usize, time: &u64) -> &mut Self;
+    fn start_time(&mut self, pos: &usize) -> u64;
+    fn set_commited_timestamp(&mut self, pos: &usize, val: &u64) -> &mut Self;
+    fn commited_timestamp(&mut self, pos: &usize) -> u64;
+    fn set_file_id(&mut self, pos: &usize, val: &u32) -> &mut Self;
+    fn file_id(&self, pos: &usize) -> u32;
+    fn set_file_position_offset(&mut self, pos: &usize, val: &u64) -> &mut Self;
+    fn file_position_offset(&self, pos: &usize) -> u64;
+    fn set_max_message_id(&mut self, pos: &usize, val: &u64) -> &mut Self;
+    fn max_message_id(&self, pos: &usize) -> u64;
+    fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self;
+    fn length_of_commit(&self, pos: &usize) -> u32;
+    fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self;
+}
+
+impl CommitFile for MemoryMappedInt {
+
+    #[inline]
+    fn set_term(&mut self, pos: &usize, val: &u64) -> &mut Self {
+        let pos = TERM_ID_OFFSET + *pos;
+        self.put_u64(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn term(&self, pos: &usize) -> u64 {
+        let pos = TERM_ID_OFFSET + *pos;
+        self.get_u64(&pos)
+    }
+
+    #[inline]
+    fn set_version(&mut self, pos: &usize, val: &u16) -> &mut Self {
+        let pos = VERSION_OFFSET + *pos;
+        self.put_u16(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn version(&self, pos: &usize) -> u16 {
+        let pos = VERSION_OFFSET + *pos;
+        self.get_u16(&pos)
+    }
+    
+    #[inline]
+    fn set_msg_type(&mut self, pos: &usize, val: &u16) -> &mut Self {
+        let pos = TYPE_OFFSET + *pos;
+        self.put_u16(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn msg_type(&self, pos: &usize) -> u16 {
+        let pos = TYPE_OFFSET + *pos;
+        self.get_u16(&pos)
+    }
+    
+    #[inline]
+    fn set_server(&mut self, pos: &usize, server_id: &u32) -> &mut Self {
+        let pos = SERVER_OFFSET + *pos;
+        self.put_u32(&pos, *server_id);
+        self
+    }
+
+    #[inline]
+    fn server(&self, pos: &usize) -> u32 {
+        let pos = SERVER_OFFSET + *pos;
+        self.get_u32(&pos)
+    }
+
+    #[inline]
+    fn set_leader(&mut self, pos: &usize, val: &u32) -> &mut Self {
+        let pos = LEADER_OFFSET + *pos;
+        self.put_u32(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn leader(&self, pos: &usize) -> u32 {
+        let pos = LEADER_OFFSET + *pos;
+        self.get_u32(&pos)
+    }
+
+    #[inline]
+    fn set_commited(&mut self, pos: &usize) -> &mut Self {
+        let pos = COMMITED + *pos;
+        self.put_u16(&pos, 1);
+        self
+    }
+
+    #[inline]
+    fn commited(&self, pos: &usize) -> u16 {
+        let pos = COMMITED + *pos;
+        self.get_u16(&pos)
+    }
+
+    #[inline]
+    fn set_start_time(&mut self, pos: &usize, time: &u64) -> &mut Self {
+        let pos = START_TIMESTAMP + *pos;
+        self.put_u64(&pos, *time);
+        self
+    }
+
+    #[inline]
+    fn start_time(&mut self, pos: &usize) -> u64 {
+        let pos = START_TIMESTAMP + *pos;
+        self.get_u64(&pos)
+    }
+
+    #[inline]
+    fn set_commited_timestamp(&mut self, pos: &usize, val: &u64) -> &mut Self {
+        let pos = COMMITED_TIMESTAMP + *pos;
+        self.put_u64(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn commited_timestamp(&mut self, pos: &usize) -> u64 {
+        let pos = COMMITED_TIMESTAMP + *pos;
+        self.get_u64(&pos)
+    }
+
+    #[inline]
+    fn set_file_id(&mut self, pos: &usize, val: &u32) -> &mut Self {
+        let pos = FILE_ID + *pos;
+        self.put_u32(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn file_id(&self, pos: &usize) -> u32 {
+        let pos = FILE_ID + *pos;
+        self.get_u32(&pos)
+    }
+
+    #[inline]
+    fn set_file_position_offset(&mut self, pos: &usize, val: &u64) -> &mut Self {
+        let pos = FILE_POSITION_OFFSET + *pos;
+        self.put_u64(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn file_position_offset(&self, pos: &usize) -> u64 {
+        let pos = FILE_POSITION_OFFSET + *pos;
+        self.get_u64(&pos)
+    }
+
+    #[inline]
+    fn set_max_message_id(&mut self, pos: &usize, val: &u64) -> &mut Self {
+        let pos = MAX_MESSAGE_ID + *pos;
+        self.put_u64(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn max_message_id(&self, pos: &usize) -> u64 {
+        let pos = MAX_MESSAGE_ID + *pos;
+        self.get_u64(&pos)
+    }
+
+    #[inline]
+    fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self {
+        let pos = LENGTH_OF_COMMIT + *pos;
+        self.put_u32(&pos, *val);
+        self
+    }
+
+    #[inline]
+    fn length_of_commit(&self, pos: &usize) -> u32 {
+        let pos = LENGTH_OF_COMMIT + *pos;
+        self.get_u32(&pos)
+    }
+
+    #[inline]
+    fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self {
+        self.set_term(pos, &term.term_id)
+            .set_version(pos, &term.version)
+            .set_msg_type(pos, &term.type_id)
+            .set_server(pos, &term.server_id)
+            .set_leader(pos, &term.leader_id)
+            .set_start_time(pos, &term.timestamp)
+            .set_commited_timestamp(pos, &term.committed_timestamp)
+            .set_file_id(pos, &term.file_id)
+            .set_file_position_offset(pos, &term.file_position_offset)
+            .set_max_message_id(pos, &term.file_max_message_id)
+            .set_length_of_commit(pos, &term.length)
+            ;
+        self
+    }
+}
+
+/// A term committed in the raft protocol.
+struct TermCommit<'a> {
+    /// The raft term id.
+    term_id: u64,
+    /// The current version of the message.
     version: u16,
+    /// The type id.
     type_id: u16,
+    /// The id of the server.
+    server_id: u32,
+    /// The id of the current leader.
+    leader_id: u32,
+    /// 1 if the message is currently commited.
     commited: u16,
+    /// The time stamp when the message was created.
     timestamp: u64,
+    /// The commited timestamp.
     committed_timestamp: u64,
-    start: u32,
-    end: u32
+    /// The id of the file we are committing to.
+    file_id: u32,
+    /// The offset of the possition of the term.
+    file_position_offset: u64,
+    /// The max messageid.
+    file_max_message_id: u64,
+    /// The length of the message commit.
+    length: u32,
+    /// The buffer associated with this term.
+    buffer: &'a [u8]
+}
+
+/// The state of the raft node.
+enum RaftNodeState {
+    Follower = 0,
+    Candidate = 1,
+    Leader = 2
 }
 
 /// The persisted file.
 pub struct PersistedMessageFile {
     /// The memory mapped file we are reading.
-    mmap_mut: MmapMut,
+    buffer_writer: MessageFileStoreRead,
+    /// The buffer to read.
+    buffer_reader: MessageFileStoreWrite,
     /// The file containig the commit information.
-    commit_file: MmapMut,
+    commit_file: MemoryMappedInt,
     /// The id of the file we are current writting to.  This can be 1, 2 or 3.
     file_id: u32,
     /// The file prefix on where to store the file.
@@ -240,6 +482,7 @@ pub trait PersistedMessageFileMut {
 }
 
 impl PersistedMessageFile {
+
     pub fn new(
         file_prefix: String,
         flie_postfix: String,
