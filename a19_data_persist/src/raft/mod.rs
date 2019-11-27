@@ -27,16 +27,17 @@ use memmap::MmapMut;
 use a19_concurrent::buffer::DirectByteBuffer;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead};
-use std::fs::{File, create_dir_all, remove_file};
+use crate::file;
 use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
 use std::sync::Arc;
-use std::fs::read_dir;
+use std::cmp::Ordering;
 use std::fs::*;
 use std::io::{Error, ErrorKind};
 use std::io;
+use std::collections::HashMap;
 use std::io::{BufWriter, BufReader};
 use std::io::prelude::*;
-use std::path::{Path, MAIN_SEPARATOR};
+use std::path::{Path, MAIN_SEPARATOR, PathBuf};
 use std::vec::Vec;
 
 #[path="../target/a19_data_persist/message/persisted_file_generated.rs"]
@@ -125,7 +126,7 @@ trait CommitFile {
     fn set_commited(&mut self, pos: &usize) -> &mut Self;
     fn commited(&self, pos: &usize) -> u16;
     fn set_start_time(&mut self, pos: &usize, time: &u64) -> &mut Self;
-    fn start_time(&mut self, pos: &usize) -> u64;
+    fn start_time(&self, pos: &usize) -> u64;
     fn set_commited_timestamp(&mut self, pos: &usize, val: &u64) -> &mut Self;
     fn commited_timestamp(&mut self, pos: &usize) -> u64;
     fn set_file_id(&mut self, pos: &usize, val: &u32) -> &mut Self;
@@ -227,7 +228,7 @@ impl CommitFile for MemoryMappedInt {
     }
 
     #[inline]
-    fn start_time(&mut self, pos: &usize) -> u64 {
+    fn start_time(&self, pos: &usize) -> u64 {
         let pos = START_TIMESTAMP + *pos;
         self.get_u64(&pos)
     }
@@ -352,12 +353,21 @@ enum RaftNodeState {
     Leader = 2
 }
 
+/// The events for the raft protocol.
+enum RaftNodeEvent {
+    ElectionTimeout = 0,
+    NewTerm = 1,
+    HeartbeatFailed = 2,
+    HeartbeatTimeout = 3,
+    HigherTerm = 4,
+}
+
 /// The persisted file.
 pub struct PersistedMessageFile {
     /// The memory mapped file we are reading.
-    buffer_writer: MessageFileStoreRead,
+    buffer_writer: MessageFileStoreWrite,
     /// The buffer to read.
-    buffer_reader: MessageFileStoreWrite,
+    buffer_reader: MessageFileStoreRead,
     /// The file containig the commit information.
     commit_file: MemoryMappedInt,
     /// The id of the file we are current writting to.  This can be 1, 2 or 3.
@@ -372,21 +382,6 @@ pub struct PersistedMessageFile {
     current_position: usize,
     /// The id of the current term.
     current_term_id: usize,
-}
-
-enum FileState {
-    /// The current file we are using.
-    USING,
-    /// Cleaning the file to be reused.
-    CLEANING,
-    /// The file is ready to be used.
-    READY
-}
-
-struct FilePair {
-    file_state: FileState,
-    message_file: String,
-    commite_file: String
 }
 
 ///  The file format for the messages.  The goal is to have raft replicate the messages onto the
@@ -481,14 +476,257 @@ pub trait PersistedMessageFileMut {
     fn capacity(&self) -> usize;
 }
 
+#[derive(Debug)]
+struct MessageFileInfo {
+    path: String,
+    file_id: u32,
+    message_id_start: u64
+}
+
+#[derive(Eq, Debug)]
+struct CommitFileInfo {
+    path: String,
+    file_id: u32,
+    term_start: u64
+}
+
+impl MessageFileInfo {
+
+    /// Used to create a new file info.
+    /// # Arguments
+    /// `path` - The path to the file.
+    /// `file_id` - The id of the file.
+    fn new(
+        path: String,
+        file_id: u32,
+        message_id_start: u64) -> Self {
+        MessageFileInfo {
+            path,
+            file_id,
+            message_id_start
+        }
+    }
+}
+
+impl CommitFileInfo {
+
+    fn new(
+        path: String,
+        file_id: u32,
+        term_start: u64) -> Self {
+        CommitFileInfo {
+            path,
+            file_id,
+            term_start
+        }
+    }
+}
+
+impl PartialOrd for CommitFileInfo {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CommitFileInfo {
+    
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.file_id.cmp(&other.file_id)
+    }
+}
+
+impl PartialEq for CommitFileInfo {
+
+    fn eq(&self, other: &Self) -> bool {
+        self.file_id == other.file_id
+    }
+}
+
+/// The commit file collection.
+struct FileCollection {
+    /// The list of files containing the commit information.
+    commit_files: Vec<CommitFileInfo>,
+    /// A map of the message files.
+    message_files: HashMap<u32, MessageFileInfo>
+}
+
+impl FileCollection {
+
+    /// Gets a new file collection.
+    fn new() -> Self {
+        FileCollection {
+            commit_files: Vec::with_capacity(10),
+            message_files: HashMap::with_capacity(10)
+        }
+    }
+
+    /// Gets the file id from the extension.
+    /// # Arguments
+    /// path_str - The path string to parse in.
+    /// # Returns
+    /// The id of the file if it can be parsed in.
+    fn read_file_id(path_str: &str) -> Option<u32> {
+        let file_id_opt: Option<&str> = path_str.split(".").last();
+        match file_id_opt {
+            Some(file_id) => {
+                match file_id.parse::<u32>() {
+                    Ok(id) => {
+                        Some(id)
+                    },
+                    _ => {
+                        None
+                    }
+                }
+            },
+            None => {
+                None
+            }
+        }
+    }
+
+    /// Adds a message file if it has a message id.
+    /// # Arguments
+    /// `path` - The path buf to the file.
+    /// `path_str` - The path of the file as a string.
+    fn add_message_file(&mut self, path: PathBuf, path_str: &str) -> std::io::Result<()> {
+        match FileCollection::read_file_id(path_str) {
+            Some(id) => {
+                let (read, _) = unsafe {MessageFileStore::open(&path_str)?};
+                let mut msg_id: u64 = 0;
+                {
+                    let result = read.read(0, move |_, id, _|{
+                        if id > 0 {
+                            msg_id = id;
+                        }
+                    });
+                    match result {
+                        Ok(_) => {
+                            self.message_files.insert(
+                                id,
+                                MessageFileInfo {
+                                    path: path_str.to_owned(),
+                                    file_id: id,
+                                    message_id_start: msg_id
+                                }
+                            );
+                            Ok(())
+                        },
+                        Err(e) => {
+                            match e {
+                                file::Error::FileError(e) => {
+                                    Err(e)
+                                }
+                                _ => {
+                                    Ok(())
+                                }
+                            }
+                        }
+                    }?
+                }
+                Ok(())
+            },
+            _ => {
+                Ok(())
+            }
+        }
+    }
+
+    /// Used to add a commit file.
+    /// # Arguments
+    /// `path` - The path buffer for the file.
+    /// `path_str` - The path string.
+    fn add_commit_file(&mut self, path: PathBuf, path_str: &str) -> std::io::Result<()> {
+        match FileCollection::read_file_id(path_str) {
+            Some(id) => {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(false)
+                    .open(path_str)?;
+                let buffer = unsafe {MemoryMappedInt::open(file)}?;
+                let term_id = buffer.term(&0); // Get the starting message.
+                let time = buffer.start_time(&0);
+                if time > 0 {
+                    self.commit_files.push(CommitFileInfo::new(path_str.to_owned(), id, term_id));
+                    Ok(())
+                } else {
+                    // Not sure what we should do with the file since it's not valid.
+                    Ok(())
+                }
+            },
+            _ => {
+                Ok(())
+            }
+        }
+    }
+
+}
+
 impl PersistedMessageFile {
 
+    /// Used to create a new persisted file.
     pub fn new(
         file_prefix: String,
         flie_postfix: String,
         file_storage_directory: String,
-        max_file_size: u64) {
+        max_file_size: u64,
+        commit_file_size: u64) {
             
+    }
+
+    /// Used to process the file collection and get the current term file and message file.
+    /// # Arguments
+    /// `file_collection` - The current collection of files to process.
+    /// `file_prefix` - The prefix name for the file.
+    /// `file_storage_directory` - The location to store the file.
+    /// `max_file_size` - The maximum file size.  The value is assumed to be already aligned.
+    /// `commit_file_size` - The commit file size.
+    fn process_files(
+        file_collection: &mut FileCollection,
+        file_prefix: &str,
+        file_storage_directory: &str,
+        max_file_size: &usize,
+        commit_file_size: &usize) -> std::io::Result<()> {
+        let path = Path::new(file_storage_directory);
+        if !path.exists() {
+            create_dir_all(file_storage_directory)?;
+        }
+        if (file_collection.commit_files.len() == 0
+            && file_collection.message_files.len() == 0) {
+            let file_id: u32 = 1;
+            let path_commit = PersistedMessageFile::create_event_name(
+                file_storage_directory,
+                file_prefix,
+                &file_id);
+            let (read, write) = unsafe{MessageFileStore::new(
+                &path_commit,
+                *max_file_size)?};
+            let path_event = PersistedMessageFile::create_commit_name(
+                file_storage_directory,
+                file_prefix,
+                &file_id);
+            let commit_file = unsafe{MemoryMappedInt::new(
+                &path_event,
+                *commit_file_size)?};
+            Ok(())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Used to create the commit file name.
+    fn create_commit_name(
+        file_storage_directory: &str,
+        file_prefix: &str, 
+        file_id: &u32) -> String {
+        format!("{}{}{}.{}.{}", file_storage_directory, MAIN_SEPARATOR, file_prefix, COMMIT_FILE_POSTIX, file_id)
+    }
+
+    fn create_event_name(
+        file_storage_directory: &str,
+        file_prefix: &str,
+        file_id: &u32) -> String {
+        format!("{}{}{}.{}.{}", file_storage_directory, MAIN_SEPARATOR, file_prefix, EVENT_FILE_POSTFIX, file_id)
     }
 
     /// Loads all of the current files.
@@ -497,117 +735,74 @@ impl PersistedMessageFile {
     /// `file_storage_directory` - The file storage directory.
     fn load_current_files(
         file_prefix: &str,
-        file_storage_directory: &str,
-        file_length: &usize) -> io::Result<Vec<FilePair>> {
+        file_storage_directory: &str) -> io::Result<FileCollection> {
         let dir_path = Path::new(&file_storage_directory);
         if dir_path.is_dir()
             || !dir_path.exists() {
             if !dir_path.exists() {
                 create_dir_all(dir_path)?;
             }
-            let mut file_vec = Vec::<FilePair>::with_capacity(20);
-            for i in 1..4 {
-                let file_events = format!("{}{}{}.{}.{}",
-                    &file_storage_directory,
-                    MAIN_SEPARATOR,
-                    &file_prefix,
-                    &EVENT_FILE_POSTFIX,
-                    i);
-                let file_commit = format!("{}{}{}.{}.{}", 
-                    &file_storage_directory,
-                    MAIN_SEPARATOR,
-                    &file_prefix,
-                    &COMMIT_FILE_POSTIX,
-                    i);
-                let file_events_path = Path::new(&file_events);
-                let file_commit_path = Path::new(&file_commit);
-                if file_events_path.is_file() 
-                    && file_commit_path.is_file() {
-                    // Check to see the status of the file by loading it.
-                } else {
-                    if file_events_path.is_file() {
-                        remove_file(&file_events)?;
+            let mut file_collection = FileCollection::new();
+            let starts_with_events = format!("{}.{}", &file_prefix, &EVENT_FILE_POSTFIX);
+            let starts_with_commits = format!("{}.{}", &file_prefix, &COMMIT_FILE_POSTIX);
+            for entry in read_dir(file_storage_directory)? {
+                let file = entry?;
+                let path: PathBuf = file.path();
+                if path.is_file() {
+                    match path.as_os_str().to_str() {
+                        Some(p) => {
+                            if p.starts_with(&starts_with_commits) {
+                                file_collection.add_message_file(
+                                    path.clone(),
+                                    p)?;
+                            } else if p.starts_with(&starts_with_events) {
+                                file_collection.add_commit_file(
+                                    path.clone(),
+                                    p)?;
+                            }
+                        },
+                        None => {
+                            // Skip for now.
+                        }
                     }
-                    if file_commit_path.is_file() {
-                        remove_file(&file_commit)?;
-                    }
-                    PersistedMessageFile::zero_new_file(
-                        &file_events,
-                        &file_length)?;
-                    PersistedMessageFile::zero_new_file(
-                        &file_commit,
-                        &file_length)?;
-                    file_vec.push(FilePair {
-                        file_state: FileState::READY,
-                        message_file: file_events,
-                        commite_file: file_commit
-                    })
                 }
             }
-            Ok(file_vec)
+            Ok(file_collection)
 
         }  else {
             Err(Error::new(ErrorKind::InvalidInput, "Path isn't a directory!"))
         }
     }
 
-    fn zero_new_file(
-        file_path: &str,
-        file_length: &usize) -> io::Result<()> {
-        let mut current_file = File::create(file_path)?;
-        let mut buffer = BufWriter::new(&current_file);
-        let value: [u8; 1024] = [0; 1024];
-        let mut current_count = *file_length;
-        loop {
-            if current_count < 1024 {
-                if current_count == 0 {
-                    break Ok(())
-                }
-                buffer.write(&value[0..current_count])?;
-                break Ok(())
-            }
-            buffer.write(&value)?;
-            current_count = current_count - value.len();
-        }
-    }
-
-    /// Used to get the file state
-    ///
-    /// # Arguments
-    /// `message_file` - The name of the message file.
-    /// `commit_file` - The file containing the commit info.
-    /// `max_length` - The maximum length of the `message_file`.
-    fn file_state(
-        message_file: &str,
-        commit_file: &str,
-        max_length: &usize) -> io::Result<FileState> {
-        let message_file = File::open(message_file)?;
-        let metaData = message_file.metadata()?;
-        if metaData.len() >= HEADER_SIZE {
-            let mut reader = BufReader::new(message_file);
-            Ok(FileState::CLEANING)
-        } else {
-            // The file is to small to be a commit file.  Need to decide what to do.
-            Ok(FileState::READY)
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::remove_dir_all;
-    use crate::raft::{PersistedMessageFile, FilePair};
+
+    use std::fs::{remove_dir_all, create_dir_all};
+    use std::path::Path;
+    use crate::raft::{PersistedMessageFile, FileCollection};
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
 
     #[test]
     pub fn load_current_file_test() {
-        remove_dir_all(TEST_DIR).unwrap();
-        let files = PersistedMessageFile::load_current_files(
-            TEST_PREFIX,
-            TEST_DIR,
-            &1_000_000).unwrap();
-        assert_eq!(3, files.len());
+        let path = Path::new(TEST_DIR);
+        if path.exists() && path.is_dir() {
+            remove_dir_all(TEST_DIR).unwrap();
+        }
+        let mut files = PersistedMessageFile::load_current_files(TEST_PREFIX, TEST_DIR).unwrap();
+        assert_eq!(files.commit_files.len(), 0);
+        assert_eq!(files.message_files.len(), 0);
+
+        let size: usize = 128 * 40;
+        PersistedMessageFile::process_files(&mut files, TEST_PREFIX, TEST_DIR, &size, &size).unwrap();
+    }
+
+    #[test]
+    pub fn file_id_test() {
+        let file_test = "test.event.2";
+        assert_eq!(FileCollection::read_file_id(file_test), Some(2));
     }
 }

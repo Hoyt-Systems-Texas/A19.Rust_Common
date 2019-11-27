@@ -2,6 +2,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
 use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::{align};
+use std::fs::OpenOptions;
 use std::sync::atomic::{ fence, Ordering };
 use std::sync::Arc;
 use std::cell::UnsafeCell;
@@ -19,12 +20,12 @@ impl MessageFileStoreRead {
     /// `act` - The action to run for the messages.
     /// # Returns
     /// The position of the next message.
-    pub fn read<'a>(&'a self,
+    pub fn read<'a, F>(&'a self,
         pos: usize, 
-        act: fn(
-            msg_type: i32,
-            message_id: u64,
-            bytes: &'a [u8])) -> Result<usize> {
+        act: F)
+        -> Result<usize> 
+        where F: FnOnce(i32, u64, &'a [u8])
+    {
         unsafe {
             let store = &mut *self.store.get();
             store.read(&pos, act)
@@ -118,6 +119,31 @@ impl MessageFileStore {
         }))
     }
 
+    /// Used to open a buffer file.
+    /// TODO check to see that the file is aligned.
+    /// # Arguments
+    /// `path` - The path of the file to open.
+    /// # Return
+    /// The read and writers for the file.
+    pub unsafe fn open<P: AsRef<Path>> (
+        path: &P) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(path)?;
+        let buffer = MemoryMappedInt::open(file)?;
+        let file_store = MessageFileStore {
+            buffer
+        };
+        let cell = Arc::new(UnsafeCell::new(file_store));
+        Ok((MessageFileStoreRead{
+            store: cell.clone()
+        }, MessageFileStoreWrite {
+            store:cell
+        }))
+    }
+
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -152,12 +178,11 @@ pub trait MessageStore {
     /// `act` - The action to run.
     /// # Returns
     /// The position of the next message.
-    fn read<'a>(&'a self,
+    fn read<'a, F>(&'a self,
         pos: &usize,
-        act: fn(
-            msg_type: i32,
-            message_id: u64,
-            bytes: &'a [u8])) -> Result<usize>;
+        act: F) -> Result<usize>
+        where F: FnOnce(i32, u64, &'a [u8])
+            ;
 
     /// Writes a message to the buffer.
     /// # Arguments
@@ -233,12 +258,12 @@ impl MessageStore for MessageFileStore {
     /// # Arguments
     /// `pos` - The starting position of the message.
     /// `act` - The action to run.
-    fn read<'a>(&'a self,
+    fn read<'a, F>(&'a self,
         pos: &usize,
-        act: fn(
-            msg_type: i32,
-            message_id: u64,
-            bytes: &'a [u8])) -> Result<usize> {
+        act: F)
+        -> Result<usize> 
+        where F: FnOnce(i32, u64, &'a [u8])
+    {
         if *pos > self.size() - ALIGNMENT {
             Err(Error::PositionOutOfRange(*pos))
         } else {
