@@ -546,21 +546,43 @@ pub struct PersistedMessageReadStream<FRead>
 impl<FRead> PersistedMessageReadStream<FRead> 
     where FRead: MessageProcessor
 {
+    /// Used to create a new reader.
+    /// # Arguments
+    /// `starting_file_id` - The file to start the read from.
+    /// `from_message_id` - The id of the message to start reading from.
+    /// `max_message_id` - The maximum message id that is safe to read.
+    /// `message_processor` - What to call to handle processing the messages.
+    /// `file_storage_directory` - The directory the files are stored in.
+    /// `file_prefix` - The file prefix for the file storage.
     fn new(
         starting_file_id: u32,
         from_message_id: u64,
         max_message_id: Arc<AtomicU64>,
         message_processor: FRead,
         file_storage_directory: String,
-        file_prefix: String) -> std::io::Result<Self> {
+        file_prefix: String) -> file::Result<Self> {
+        let mut file_id = starting_file_id;
+        let mut starting_pos = 0;
         let buffer = loop {
-            let file_name = create_commit_name(
+            let file_name = create_event_name(
                 &file_storage_directory,
                 &file_prefix,
-                &starting_file_id);
+                &file_id);
             let buffer = unsafe{MessageFileStore::open_readonly(
                 &file_name)?};
-            break buffer
+            match find_message(&buffer, from_message_id)? {
+                FindMessageResult::Found(pos) => {
+                    starting_pos = pos;
+                    break buffer
+                },
+                FindMessageResult::End(pos) => {
+                    starting_pos = pos;
+                    break buffer
+                },
+                FindMessageResult::EndOfFile => {
+                    file_id += 1;
+                }
+            }
         };
         Ok(PersistedMessageReadStream {
             file_prefix,
@@ -568,10 +590,59 @@ impl<FRead> PersistedMessageReadStream<FRead>
             file_storage_directory,
             file_id: starting_file_id,
             max_message_id,
-            current_pos: 0,
+            current_pos: starting_pos,
             message_processor
         })
     }
+
+    /// called to process the next message in the buffer.
+    fn process_next(&mut self) -> file::Result<bool> {
+        match self.buffer.read_new(&self.current_pos) {
+            Ok(msg) => {
+                if msg.messageId() <= self.max_message_id.load(atomic::Ordering::Relaxed) {
+                    self.current_pos = msg.next_pos();
+                    self.message_processor.handle(msg);
+                    Ok(true)
+                } else if msg.messageId() == std::u64::MAX {
+                    self.switch_to_next_buffer()?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            },
+            Err(e) => {
+                match e {
+                    file::Error::NoMessage => {
+                        Ok(false)
+                    },
+                    file::Error::PositionOutOfRange(_) => {
+                        self.switch_to_next_buffer()?;
+                        Ok(true)
+                    },
+                    file::Error::Full => {
+                        self.switch_to_next_buffer()?;
+                        Ok(true)
+                    },
+                    _ => {
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Switches to the next file buffer.
+    fn switch_to_next_buffer(&mut self) -> file::Result<()> {
+        let new_buffer_name = create_event_name(
+            &self.file_storage_directory,
+            &self.file_prefix,
+            &(self.file_id + 1));
+        let new_buffer = unsafe{MessageFileStore::open_readonly(&new_buffer_name)}?;
+        self.buffer = new_buffer;
+        self.file_id += 1;
+        Ok(())
+    }
+
 }
 
 enum FindMessageResult {
@@ -601,7 +672,7 @@ fn find_message(
                     break Ok(FindMessageResult::End(pos))
                 } else if msg.messageId() == std::u64::MAX {
                     break Ok(FindMessageResult::EndOfFile)
-                } else if msg.messageId() == msg_id {
+                } else if msg.messageId() >= msg_id {
                     break Ok(FindMessageResult::Found(pos))
                 } else {
                     pos = msg.next_pos()
@@ -1341,8 +1412,8 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::path::Path;
-    use crate::file::MessageFileStore;
-    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult};
+    use crate::file::{ MessageFileStore, MessageRead };
+    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult, MessageProcessor};
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
@@ -1398,6 +1469,38 @@ mod tests {
             _ => {
                 panic!("Did not find the position.");
             }
+        }
+        let mut reader = PersistedMessageReadStream::new(
+            1,
+            0,
+            Arc::new(AtomicU64::new(1)),
+            MessageProcessorInt::new(),
+            file_storage_directory.clone(),
+            TEST_PREFIX.to_owned()).unwrap();
+        let r = reader.process_next().unwrap();
+        assert_eq!(true, r);
+        let r = reader.process_next().unwrap();
+        assert_eq!(false, r);
+    }
+
+    struct MessageProcessorInt {
+        ran: bool,
+        last_message_id: u64
+    }
+
+    impl MessageProcessorInt {
+        fn new() -> Self {
+            MessageProcessorInt {
+                ran: false,
+                last_message_id: 0
+            }
+        }
+    }
+
+    impl MessageProcessor for MessageProcessorInt {
+        fn handle<'a>(&mut self, read: MessageRead<'a>) {
+            self.ran = true;
+            self.last_message_id = read.messageId();
         }
     }
 }
