@@ -29,14 +29,16 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead, MessageRead};
 use crate::file;
 use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
-use std::sync::{ Arc, Mutex };
+use std::sync::{ Arc, Mutex, atomic };
 use std::sync::atomic::{ AtomicUsize, AtomicU64 };
+use std::thread::{spawn, JoinHandle};
 use std::cmp::Ordering;
 use std::fs::*;
 use std::io::{Error, ErrorKind};
 use std::io;
 use std::collections::{ HashMap, VecDeque };
 use std::io::{BufWriter, BufReader};
+use std::marker::PhantomData;
 use std::io::prelude::*;
 use std::path::{Path, MAIN_SEPARATOR, PathBuf};
 use std::vec::Vec;
@@ -386,7 +388,139 @@ pub struct PersistedMessageWriteStream {
     /// The current id of the file.
     file_id: u32,
     /// The current position.
-    current_pos: Arc<AtomicUsize>,
+    max_message_id: Arc<AtomicU64>,
+    /// The storage directory.
+    file_storage_directory: String,
+    /// The file prefix.
+    file_prefix: String,
+    /// The size of the file to create.
+    file_size: usize,
+    current_pos: usize,
+}
+
+impl PersistedMessageWriteStream {
+
+    /// Creates a new message write stream.
+    /// # Arguments
+    /// `start_file_id` - The starting file id.  This is expected to be the last file.
+    /// `file_storage_directory` - The file storage directory.
+    /// `file_prefix` - The prefix for the file.
+    /// `file_size` - The size of the file.
+    fn new(
+        start_file_id: u32,
+        file_storage_directory: String,
+        file_prefix: String,
+        file_size: usize,
+        max_message_id: Arc<AtomicU64>
+    ) -> file::Result<Self> {
+        let mut event_name = create_event_name(&file_storage_directory, &file_prefix, &start_file_id);
+        let mut buffer = unsafe{MessageFileStore::open_write(&event_name, file_size)?};
+        let mut file_id = start_file_id;
+        let reader = unsafe{MessageFileStore::open_readonly(&event_name)?};
+        let pos = match find_end_of_buffer(&reader)? {
+            FindEmptySlotResult::Pos(p) => {
+                p
+            },
+            FindEmptySlotResult::Full => {
+                file_id += 1;
+                event_name = create_event_name(&file_storage_directory, &file_prefix, &file_id);
+                buffer = unsafe{MessageFileStore::open_write(&event_name, file_size)?};
+                0
+            }
+        };
+        Ok(PersistedMessageWriteStream {
+            buffer,
+            file_id: start_file_id,
+            max_message_id,
+            file_storage_directory,
+            file_prefix,
+            file_size,
+            current_pos: pos
+        })
+    }
+
+    /// Writes to the file at a specified position.  Is done when copying the files.
+    /// # Arguments
+    fn write_pos(
+        &mut self,
+        file_id: &usize,
+        pos: &usize,
+        msg_type: &i32,
+        msg_id: &u64,
+        buffer: &[u8]) -> crate::file::Result<usize>{
+        self.buffer.write(
+            pos,
+            msg_type,
+            msg_id,
+            buffer
+        )
+    }
+
+    /// Adds the message to the buffer.  Only to be used if this is the leader.
+    /// # Arguments
+    /// `pos` - The position 
+    /// `msg_type` - The type of the message.
+    /// `msg_id` - The id of the message.
+    /// `buffer` - The buffer to write to the message buffer.
+    fn add_message(
+        &mut self,
+        msg_type: &i32,
+        msg_id: &u64,
+        buffer: &[u8]
+    ) -> crate::file::Result<usize> {
+        match self.buffer.write(
+            &self.current_pos,
+            msg_type,
+            msg_id,
+            buffer
+        ) {
+            Ok(s) => {
+                self.current_pos += s;
+                self.max_message_id.store(*msg_id, atomic::Ordering::Release);
+                Ok(s)
+            },
+            Err(e) => {
+                match e {
+                    file::Error::NotEnoughSpace{message_size, position, capacity, remaining}
+                    => {
+                        // TODO write a message type to indicate the end of the file.  Check to see
+                        // if we are at the end of the file before doing this.
+                        self.buffer.write(&self.current_pos, &-1, &std::u64::MAX, &[0, 0])?;
+                        self.file_id += 1; 
+                        self.current_pos = 0;
+                        let file = create_commit_name(
+                            &self.file_storage_directory,
+                            &self.file_prefix,
+                            &self.file_id);
+                        self.buffer = unsafe{MessageFileStore::open_write(
+                            &file,
+                            self.file_size)?};
+                        match self.buffer.write(
+                            &self.current_pos,
+                            msg_type,
+                            msg_id,
+                            buffer) {
+                            Ok(s) => {
+                                self.current_pos += s;
+                                self.max_message_id.store(*msg_id, atomic::Ordering::Release);
+                                Ok(s)
+                            },
+                            Err(e) => {
+                                Err(e)
+                            }
+                        }
+                    },
+                    e => {
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn flush(&self) -> crate::file::Result<()> {
+        self.buffer.flush()
+    }
 }
 
 /// Represents a stream we are currently reading in a processing messages.  Each message is
@@ -401,6 +535,135 @@ pub struct PersistedMessageReadStream<FRead>
     max_message_id: Arc<AtomicU64>,
     /// What processes the incomming message as they are commited.
     message_processor: FRead,
+    /// The storage directory.
+    file_storage_directory: String,
+    /// The file prefix.
+    file_prefix: String,
+    /// The current position in the files.
+    current_pos: usize
+}
+
+impl<FRead> PersistedMessageReadStream<FRead> 
+    where FRead: MessageProcessor
+{
+    fn new(
+        starting_file_id: u32,
+        from_message_id: u64,
+        max_message_id: Arc<AtomicU64>,
+        message_processor: FRead,
+        file_storage_directory: String,
+        file_prefix: String) -> std::io::Result<Self> {
+        let buffer = loop {
+            let file_name = create_commit_name(
+                &file_storage_directory,
+                &file_prefix,
+                &starting_file_id);
+            let buffer = unsafe{MessageFileStore::open_readonly(
+                &file_name)?};
+            break buffer
+        };
+        Ok(PersistedMessageReadStream {
+            file_prefix,
+            buffer,
+            file_storage_directory,
+            file_id: starting_file_id,
+            max_message_id,
+            current_pos: 0,
+            message_processor
+        })
+    }
+}
+
+enum FindMessageResult {
+    /// Found the end of the file.
+    EndOfFile,
+    /// The message was found and returns the position.
+    Found(usize),
+    /// The file ended and this is the position of the end.
+    End(usize)
+}
+
+/// Used to find a message in a file.
+/// # Arguments
+/// `buffer` - The buffer to read in.
+/// `msg_id` - The id of the message we are trying to find.
+/// # Returns
+/// Returns the position of the message in the file.
+fn find_message(
+    buffer: &MessageFileStoreRead,
+    msg_id: u64) -> crate::file::Result<FindMessageResult> {
+    let mut pos = 0;
+    loop {
+        match buffer.read_new(
+            &pos) {
+            Ok(msg) => {
+                if msg.messageId() == 0 {
+                    break Ok(FindMessageResult::End(pos))
+                } else if msg.messageId() == std::u64::MAX {
+                    break Ok(FindMessageResult::EndOfFile)
+                } else if msg.messageId() == msg_id {
+                    break Ok(FindMessageResult::Found(pos))
+                } else {
+                    pos = msg.next_pos()
+                }
+            },
+            Err(e) => {
+                match e {
+                    crate::file::Error::NoMessage => {
+                        break Ok(FindMessageResult::End(pos))
+                    },
+                    crate::file::Error::PositionOutOfRange(_) => {
+                        break Ok(FindMessageResult::EndOfFile)
+                    }
+                    _ => {
+                        break Err(e)
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum FindEmptySlotResult {
+    Full,
+    Pos(usize)
+}
+
+/// Finds the end of the buffer.
+/// # Arguments
+/// `buffer` - The buffer we are reading in.
+/// # Returns
+/// The spot of the empty slot.
+fn find_end_of_buffer(
+    buffer: &MessageFileStoreRead) -> crate::file::Result<FindEmptySlotResult> {
+    let mut pos = 0;
+    loop {
+        match buffer.read_new(&pos) {
+            Ok(msg) => {
+                if msg.messageId() == 0 {
+                    break Ok(FindEmptySlotResult::Pos(pos))
+                } else if msg.messageId() == std::u64::MAX {
+                    break Ok(FindEmptySlotResult::Full)
+                } else {
+                    pos = msg.next_pos();
+                }
+            },
+            Err(e) => {
+                match e {
+                    crate::file::Error::NoMessage => {
+                        break Ok(FindEmptySlotResult::Pos(pos))
+                    },
+                    crate::file::Error::PositionOutOfRange(_) => {
+                        break Ok(FindEmptySlotResult::Full)
+                    },
+                    _ => {
+                        break Err(e)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Represents the commit stream.
@@ -415,6 +678,19 @@ pub struct PersistedCommitStream {
     new_term_file_id: u32,
     /// The current max committed file id.
     max_message_id: Arc<AtomicU64>,
+    /// The storage directory.
+    file_storage_directory: String,
+    /// The file prefix.
+    file_prefix: String,
+    /// The size of the file to create.
+    file_size: u64,
+}
+
+#[derive(Debug, Clone)]
+struct FileStorageInfo {
+    file_storage_directory: String,
+    file_prefix: String,
+    max_file_size: u64,
 }
 
 /// The persisted file.
@@ -642,6 +918,9 @@ struct FileCollection {
     /// The prefix for the files
     file_prefix: String
 }
+
+unsafe impl Sync for FileCollection {}
+unsafe impl Send for FileCollection {}
 
 /// The message iterator.
 pub struct MessageIterator {
@@ -923,6 +1202,10 @@ fn create_event_name(
     file_storage_directory: &str,
     file_prefix: &str,
     file_id: &u32) -> String {
+    let path = Path::new(file_storage_directory);
+    if !path.exists() {
+        create_dir_all(path).unwrap();
+    }
     format!("{}{}{}.{}.{}", file_storage_directory, MAIN_SEPARATOR, file_prefix, EVENT_FILE_POSTFIX, file_id)
 }
 
@@ -1055,8 +1338,11 @@ impl<FRead> PersistedMessageFile<FRead>
 mod tests {
 
     use std::fs::{remove_dir_all, create_dir_all};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
     use std::path::Path;
-    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id};
+    use crate::file::MessageFileStore;
+    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult};
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
@@ -1079,9 +1365,39 @@ mod tests {
         let mut other_files = load_current_files(TEST_PREFIX, TEST_DIR).unwrap();
     }
 
+    fn clean_dir() {
+        let path = Path::new(TEST_DIR);
+        if path.exists() && path.is_dir() {
+            remove_dir_all(TEST_DIR).unwrap();
+        }
+    }
+
     #[test]
     pub fn file_id_test() {
         let file_test = "test.event.2";
         assert_eq!(read_file_id(file_test), Some(2));
+    }
+
+    #[test]
+    pub fn find_end_of_buffer_test() {
+        let file_storage_directory = format!("{}_end_of", TEST_DIR);
+        let path = Path::new(&file_storage_directory);
+        if path.exists() && path.is_dir() {
+            remove_dir_all(&file_storage_directory).unwrap();
+        }
+        let message_id = Arc::new(AtomicU64::new(0));
+        let mut writer = PersistedMessageWriteStream::new(1, file_storage_directory.to_owned(), TEST_PREFIX.to_owned(), 2048, message_id).unwrap();
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        writer.add_message(&1, &1, &bytes[0..8]).unwrap();
+        writer.flush().unwrap();
+        let reader = unsafe{MessageFileStore::open_readonly(&create_event_name(&file_storage_directory, TEST_PREFIX, &1)).unwrap()};
+        match find_end_of_buffer(&reader).unwrap() {
+            FindEmptySlotResult::Pos(x) => {
+                assert_eq!(x, 32);
+            },
+            _ => {
+                panic!("Did not find the position.");
+            }
+        }
     }
 }

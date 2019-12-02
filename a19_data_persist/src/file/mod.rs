@@ -160,13 +160,22 @@ impl MessageFileStore {
     /// # Arguments
     /// `path` - The path of the file to open.
     pub unsafe fn open_write<P: AsRef<Path>> (
-        path: &P) -> std::io::Result<MessageFileStoreWrite> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(false)
-            .open(path)?;
-        let buffer = MemoryMappedInt::open(file)?;
+        path: &P,
+        file_size: usize) -> std::io::Result<MessageFileStoreWrite> {
+        let buffer = if path.as_ref().exists() {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)?;
+            MemoryMappedInt::open(file)?
+        } else {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(path)?;
+            MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?
+        };
         let file_store = MessageFileStore {
             buffer
         };
@@ -487,6 +496,7 @@ mod tests {
             2048).unwrap()
         };
         
+        let read_again = unsafe {MessageFileStore::open_readonly(&test_file).unwrap()};
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
         write.write(&0, &1, &2, &bytes[0..8]).unwrap();
         write.flush().unwrap();
@@ -495,7 +505,6 @@ mod tests {
             assert_eq!(message_id, 2);
             assert_eq!(body.len(), 8);
         }).unwrap();
-        let read_again = unsafe {MessageFileStore::open_readonly(&test_file).unwrap()};
         read_again.read(0, |msg_type, message_id, body| {
             assert_eq!(msg_type, 1);
             assert_eq!(message_id, 2);
