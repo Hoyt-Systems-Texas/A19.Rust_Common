@@ -22,15 +22,17 @@ pub mod network;
 const EVENT_FILE_POSTFIX: &str = "events";
 const COMMIT_FILE_POSTIX: &str = "commit";
 const HEADER_SIZE_BYTES: u64 = 128;
+const HEADER_SIZE_BITS: u64 = 128 * 8;
 
 use memmap::MmapMut;
 use a19_concurrent::buffer::DirectByteBuffer;
+use a19_concurrent::buffer::align;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead, MessageRead};
 use crate::file;
 use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
 use std::sync::{ Arc, Mutex, atomic };
-use std::sync::atomic::{ AtomicUsize, AtomicU64 };
+use std::sync::atomic::{ AtomicU64, AtomicU8 };
 use std::thread::{spawn, JoinHandle};
 use std::cmp::Ordering;
 use std::fs::*;
@@ -382,9 +384,14 @@ struct TermCommit<'a> {
 
 /// The state of the raft node.
 enum RaftNodeState {
-    Follower = 0,
-    Candidate = 1,
-    Leader = 2
+    /// The node is currently in a follower type and is copying messages to the buffer.
+    Follower(PersistedCommitStreamFollower),
+    /// The node is a candidate.
+    Candidate,
+    /// The node is the leader and is writing and sending messages.
+    Leader(PersistedCommitStreamLeader),
+    /// In single node mode.
+    SingleNode(PersistedCommitSingleNode)
 }
 
 /// The events for the raft protocol.
@@ -397,6 +404,8 @@ enum RaftNodeEvent {
 }
 
 pub trait MessageProcessor {
+    /// Handles an incoming message.
+    /// `read` - The message that has been read in.
     fn handle<'a>(&mut self, read: MessageRead<'a>);
 }
 
@@ -416,7 +425,7 @@ pub struct PersistedMessageWriteStream {
     buffer: MessageFileStoreWrite,
     /// The current id of the file.
     file_id: u32,
-    /// The current position.
+    /// The current max message id.
     max_message_id: Arc<AtomicU64>,
     /// The storage directory.
     file_storage_directory: String,
@@ -424,6 +433,7 @@ pub struct PersistedMessageWriteStream {
     file_prefix: String,
     /// The size of the file to create.
     file_size: usize,
+    /// The current position.
     current_pos: usize,
 }
 
@@ -769,11 +779,13 @@ fn find_end_of_buffer(
 /// Represents a term file.
 struct TermFile {
     /// The buffer we are writing to.
-    buffer: MemoryMappedInt,
+    pub buffer: MemoryMappedInt,
     /// The term start.
-    term_start: u64,
+    pub term_start: u64,
+    /// The term end.
+    pub term_end: u64,
     /// The id of the fiel.
-    file_id: u32,
+    pub file_id: u32,
 }
 
 enum TermPosResult {
@@ -787,7 +799,40 @@ enum TermPosResult {
 }
 
 impl TermFile {
-    
+
+    /// A new term file.
+    /// `buffer` - The current buffer.
+    /// `term_start` - The starting term buffer.
+    /// `file_id` - The id of the file.
+    fn new(
+        buffer: MemoryMappedInt,
+        term_start: u64,
+        file_id: u32
+    ) -> Self {
+        let c = buffer.capacity() as u64;
+        TermFile {
+            buffer,
+            term_start,
+            term_end: c / HEADER_SIZE_BYTES,
+            file_id
+        }
+    }
+
+    /// Calculates the position of the term in the file.
+    /// # Arguments
+    /// `term_id` - The term to calculate the position of.
+    /// # Returns
+    /// The position of the term so it can be read in.
+    fn calculate_pos(&self, term_id: &u64) -> TermPosResult {
+        if *term_id < self.term_start {
+            TermPosResult::Underflow
+        } else if *term_id > self.term_end {
+            TermPosResult::Overflow
+        } else {
+            let offset = *term_id - self.term_start;
+            TermPosResult::Pos(offset * HEADER_SIZE_BYTES)
+        }
+    }
 }
 
 pub struct PersistedCommitStreamLeader {
@@ -800,6 +845,41 @@ pub struct PersistedCommitStreamLeader {
     file_prefix: String,
     file_size: u64,
     buffer: MessageFileStoreRead,
+}
+
+pub struct PersistedCommitSingleNode {
+    /// The current commit file.
+    commit_file: Rc<Cell<TermFile>>,
+    /// The current file we are placing new terms to.
+    new_term_file: Rc<Cell<TermFile>>,
+    /// The maximum message id.
+    max_message_id: Arc<AtomicU64>,
+    /// The file storage directory.
+    file_storage_directory: String,
+    /// The file prefix.
+    file_prefix: String,
+    /// The maximum size of the file.
+    file_size: usize,
+}
+
+impl PersistedCommitSingleNode {
+
+    fn new(
+        commit_file: Rc<Cell<TermFile>>,
+        new_term_file: Rc<Cell<TermFile>>,
+        max_message_id: Arc<AtomicU64>,
+        file_storage_directory: String,
+        file_prefix: String,
+        file_size: usize) -> Self {
+        PersistedCommitSingleNode {
+            commit_file,
+            new_term_file,
+            max_message_id,
+            file_storage_directory,
+            file_prefix,
+            file_size
+        }
+    }
 }
 
 /// Represents the commit stream.
@@ -832,34 +912,21 @@ pub struct PersistedMessageFile<FRead>
     where FRead:MessageProcessor
 {
     /// The memory mapped file we are reading.
-    primary_writer: MessageWriter,
+    primary_writer: PersistedMessageWriteStream,
     /// The buffer to read.
-    primary_reader: MessageReader,
-    /// The pending readers.
-    pending_readers: VecDeque<MessageFileStoreRead>,
-    /// The file containig the commit information.
-    commit_file: Rc<Cell<MemoryMappedInt>>,
-    /// The file to write the new terms to.  Note this file can be the same file as the commit
-    /// file.
-    new_term_file: Rc<Cell<MemoryMappedInt>>,
-    /// The file collection containing the messages.
-    file_collection: FileCollection,
+    primary_reader: PersistedMessageReadStream<FRead>,
     /// The maximum file size before it roles overs.
     max_file_size: usize,
-    /// The current position in the file.
-    message_writer_pos: usize,
-    /// The current message reader position.
-    message_reader_pos: usize,
-    /// The current write position for the term.
-    term_write_pos: usize,
-    /// The current term commit position.
-    term_commit_pos: usize,
-    /// The id of the current term.
-    current_term_id: u64,
-    /// The term we are currently commited to.
-    current_commit_term_id: u64,
-    /// The message handler.
-    message_handler: FRead
+    /// The current state of the node.
+    current_state: RaftNodeState,
+    /// The thread that processes the commit.
+    commit_join: Option<JoinHandle<u32>>,
+    /// The writer joiner.
+    writer_join: Option<JoinHandle<u32>>,
+    /// The reader joiner.
+    reader_join: Option<JoinHandle<u32>>,
+    /// The atomic u8.
+    stop: Arc<AtomicU8>
 }
 
 ///  The file format for the messages.  The goal is to have raft replicate the messages onto the
@@ -1451,21 +1518,187 @@ fn load_current_files(
         }
 }
 
+enum LastCommitPos {
+    NoCommits,
+    LastCommit{
+        start_term_id: u64,
+        term_id: u64,
+        file_id: u32,
+        max_message_id: u64,
+        path: String }
+}
+
+/// Used to find the position and the file of the last commit.
+/// # Arguments
+/// `commit_files` - The commit files.
+fn find_last_commit_pos(
+    commit_files: Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
+    let commit_files = commit_files.lock().unwrap();
+    let length = commit_files.len();
+    if length == 0 {
+        LastCommitPos::NoCommits
+    } else {
+        let mut file_pos = length - 1;
+        loop {
+            let file_commit: &CommitFileInfo = commit_files.get(file_pos).unwrap();
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(false)
+                .open(&file_commit.path).unwrap();
+            let buffer = unsafe {MemoryMappedInt::open(file).unwrap()};
+            let mut pos = 0;
+            let mut last_term = 0;
+            let mut found_commit = false;
+            let mut last_max_message = 0;
+            let start_term_id = file_commit.term_start;
+            loop {
+                let term = buffer.term(&pos);
+                if term == 0 {
+                    break
+                } else {
+                    if buffer.committed(&pos) > 0 {
+                        last_term = term;
+                        found_commit = true;
+                        last_max_message = buffer.max_message_id(&pos);
+                        pos += HEADER_SIZE_BYTES as usize;
+                    } else {
+                        break
+                    }
+                }
+            }
+            if found_commit {
+                break LastCommitPos::LastCommit{                    
+                    start_term_id,
+                    term_id: last_term,
+                    file_id: file_commit.file_id,
+                    max_message_id: last_max_message,
+                    path: file_commit.path.clone()}
+            } else {
+                if file_pos == 0 {
+                    break LastCommitPos::NoCommits
+                } else {
+                    file_pos -= 1;
+                }
+            }
+        }
+    }
+}
+
 impl<FRead> PersistedMessageFile<FRead> 
     where FRead: MessageProcessor
 {
 
-    /// Used to create a new persisted file.
-    pub fn new(
-        file_prefix: String,
+    /// Used to create a new singe none distributed persisted file.
+    /// # Arguments
+    /// `file_storage_directory` - The directory to store the files.
+    /// `file_prefix` - The prefix for the file to create.
+    /// `max_file_size` - The maximum file size.
+    /// `commit_file_size` - The maximum commit file size.
+    /// `message_processor` - The message processor.
+    /// # Returns
+    /// The single node info.
+    pub fn new_single_node(
         file_storage_directory: String,
-        max_file_size: u64,
-        commit_file_size: u64,
-        message_processor: FRead) {
-            
+        file_prefix: String,
+        max_file_size: usize,
+        commit_file_size: usize,
+        message_processor: FRead) -> Self {
+        let store_path = Path::new(&file_storage_directory);
+        if !store_path.exists() {
+            create_dir_all(&file_storage_directory).unwrap();
+        }
+        let collection = FileCollection::new(file_storage_directory.clone(), file_prefix.clone());
+        let max_message = Arc::new(AtomicU64::new(0));
+        let message_files = collection.message_files.lock().unwrap();
+        let writer = if message_files.len() > 0 {
+            let file: &MessageFileInfo = message_files.get(message_files.len() - 1).unwrap();
+            PersistedMessageWriteStream::new(
+                file.file_id,
+                file_storage_directory.clone(),
+                file_prefix.clone(),
+                max_file_size,
+                max_message.clone()
+            ).unwrap()
+        } else {
+            PersistedMessageWriteStream::new(
+                1,
+                file_storage_directory.clone(),
+                file_prefix.clone(),
+                max_file_size,
+                max_message.clone()
+            ).unwrap()
+        };
+        // Since we don't have snapshots we have to start form the beginning.
+        let reader = PersistedMessageReadStream::new(
+            1,
+            0,
+            max_message.clone(),
+            message_processor,
+            file_storage_directory.clone(),
+            file_prefix.clone()).unwrap();
+        let commit = match find_last_commit_pos(collection.commit_files) {
+            LastCommitPos::NoCommits => {
+                let file_id = 1;
+                let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&file_name);
+                let map = unsafe{MemoryMappedInt::new(&file_name, align(commit_file_size, HEADER_SIZE_BYTES as usize)).unwrap()};
+                let term = Rc::new(Cell::new(TermFile::new(map, 1, file_id)));
+                RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
+                        term.clone(),
+                        term.clone(),
+                        max_message,
+                        file_storage_directory.clone(),
+                        file_prefix.clone(),
+                        commit_file_size
+                ))
+            },
+            LastCommitPos::LastCommit{
+                start_term_id,
+                term_id,
+                file_id,
+                max_message_id,
+                path
+            } => {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(false)
+                    .open(&path).unwrap();
+                let map = unsafe{MemoryMappedInt::open(file).unwrap()};
+                max_message.store(max_message_id, atomic::Ordering::Relaxed);
+                // Get the current term we need to find.
+                let term = Rc::new(Cell::new(TermFile::new(map, start_term_id, file_id)));
+                RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
+                        term.clone(),
+                        term.clone(),
+                        max_message,
+                        file_storage_directory.clone(),
+                        file_prefix.clone(),
+                        commit_file_size
+                ))
+            }
+        };
+        PersistedMessageFile {
+            max_file_size,
+            current_state: commit,
+            primary_writer: writer,
+            primary_reader: reader,
+            commit_join: None,
+            writer_join: None,
+            reader_join: None,
+            stop: Arc::new(AtomicU8::new(0))
+        }
     }
 
+    /// Used to startup the threads for processing the requests.
+    fn start(&mut self) {
 
+    }
 }
 
 #[cfg(test)]
@@ -1480,6 +1713,11 @@ mod tests {
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
+
+    /// Used to crate the directory to test with.
+    fn create_dir(name: &str) -> String {
+        format!("{}_{}", TEST_DIR, name)
+    }
 
     #[test]
     pub fn load_current_file_test() {
@@ -1545,6 +1783,23 @@ mod tests {
         assert_eq!(true, r);
         let r = reader.process_next().unwrap();
         assert_eq!(false, r);
+    }
+
+    #[test]
+    pub fn create_single_node_processor() {
+        let file_storage_directory = format!("{}_single_node", TEST_DIR);
+        let path = Path::new(&file_storage_directory);
+        if path.exists() && path.is_dir() {
+            remove_dir_all(&file_storage_directory).unwrap();
+        }
+        let processor = MessageProcessorInt::new();
+        let single_node = PersistedMessageFile::new_single_node(
+            file_storage_directory,
+            TEST_PREFIX.to_owned(),
+            5000,
+            5000,
+            processor
+        );
     }
 
     struct MessageProcessorInt {
