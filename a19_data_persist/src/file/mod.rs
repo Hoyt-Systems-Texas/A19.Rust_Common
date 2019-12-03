@@ -43,6 +43,15 @@ impl MessageFileStoreRead {
             store.read_new(pos)
         }
     }
+
+    fn read_block<'a>(
+        &'a self,
+        pos: &usize,
+        max_message_id: &u64,
+        max_length: &usize) -> Result<MessageBlock<'a>> {
+        let store = unsafe { &mut *self.store.get() };
+        store.read_block(pos, max_message_id, max_length)
+    }
 }
 
 unsafe impl Sync for MessageFileStoreRead {}
@@ -250,9 +259,26 @@ pub trait MessageStore {
         act: F) -> Result<usize>
         where F: FnOnce(i32, u64, &'a [u8]);
 
+    /// Reads in a message from a buffer.
+    /// # Arguments
+    /// `pos` - The position to read in the memory.
+    /// # Returns
+    /// The message read in.
     fn read_new<'a>(
         &'a self,
         pos: &usize) -> Result<MessageRead<'a>>;
+
+    /// Used to read in a block of messages.  Useful for sending the blocks over a network in a
+    /// batch.
+    /// # Arguments
+    /// `pos` - The position to read in from.
+    /// `max_message_id` - The maximum message id.
+    /// `max_length` - The maximum length of the byte buffer to get.
+    fn read_block<'a>(
+        &'a self,
+        pos: &usize,
+        max_message_id: &u64,
+        max_length: &usize) -> Result<MessageBlock<'a>>;
 
     /// Writes a message to the buffer.
     /// # Arguments
@@ -317,6 +343,30 @@ pub struct MessageRead<'a> {
     message_id: MessageId,
     bytes: &'a [u8],
     next_pos: usize
+}
+
+pub struct MessageBlock<'a> {
+    pub message_id_start: u64,
+    pub message_id_end: u64,
+    pub bytes: &'a [u8],
+    pub next_pos: usize
+}
+
+impl<'a> MessageBlock<'a> {
+    
+    /// Creates a new message block.
+    fn new(
+        message_id_start: u64,
+        message_id_end: u64,
+        bytes: &'a [u8],
+        next_pos: usize) -> Self {
+        MessageBlock {
+            message_id_start,
+            message_id_end,
+            bytes,
+            next_pos
+        }
+    }
 }
 
 impl<'a> MessageRead<'a> {
@@ -403,6 +453,9 @@ impl MessageStore for MessageFileStore {
         }
     }
 
+    /// Used to read in a message.
+    /// # Arguments
+    /// `pos` - The position to read in the message at.
     fn read_new<'a>(
         &'a self,
         pos: &usize) -> Result<MessageRead<'a>> {
@@ -430,6 +483,54 @@ impl MessageStore for MessageFileStore {
                     let bytes = self.buffer.get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
                     let next_pos = aligned + pos;
                     Ok(MessageRead::new(message_type, message_id, bytes, next_pos))
+                }
+            }
+        }
+    }
+
+    fn read_block<'a>(
+        &'a self,
+        pos: &usize,
+        max_message_id: &u64,
+        max_length: &usize) -> Result<MessageBlock<'a>> {
+        fence(Ordering::Acquire);
+        let mut current_pos = *pos;
+        let mut length = 0;
+        let mut start_message_id = 0;
+        let mut last_message_id = 0;
+        loop {
+            let size = align(self.buffer.get_u32(&current_pos) as usize, HEADER_SIZE);
+            if size == 0 || size + length > *max_length {
+                if length == 0 {
+                    break Err(Error::NoMessage)
+                } else {
+                    break Ok(MessageBlock::new(
+                            start_message_id,
+                            last_message_id,
+                            self.buffer.get_bytes(pos, &length),
+                            *pos + length
+                    ))
+                }
+            } else {
+                let message_id = self.buffer.get_u64(&MessageFileStore::calculate_message_id_pos(&current_pos));
+                if message_id <= *max_message_id {
+                    last_message_id = message_id;
+                    if start_message_id == 0 {
+                        start_message_id = message_id;
+                    }
+                    length += size;
+                    current_pos += size;
+                } else {
+                    if start_message_id > 0 && length > 0 {
+                        break Ok(MessageBlock::new(
+                            start_message_id,
+                            last_message_id,
+                            self.buffer.get_bytes(pos, &length),
+                            *pos + length
+                        ))
+                    } else {
+                        break Err(Error::NoMessage)
+                    }
                 }
             }
         }
@@ -471,7 +572,7 @@ impl MessageStore for MessageFileStore {
             // Always write the size last since we are using this to check and we need a StoreStore
             // barrier here.  IE all of the previous stores need to be completed.
             self.buffer.put_u32_volatile(&message_size_pos, &size);
-            Ok(aligned)
+            Ok(aligned + *position)
         }
     }
 
@@ -484,13 +585,21 @@ mod tests {
     use std::fs::remove_file;
     use std::path::Path;
 
+    const TEST_DIR: &str = "/home/mrh0057/rust_file_test";
+
+    /// Used to create a testing directory with the specified.
+    fn create_test_file(name: &str) -> String {
+        let file = format!("{}_{}", TEST_DIR, name);
+        let path = Path::new(&file);
+        if path.exists() {
+            remove_file(&file).unwrap();
+        }
+        file
+    }
+
     #[test]
     pub fn create_test() {
-        let test_file = Path::new("/home/mrh0057/rust_file_test");
-        if test_file.exists() {
-            remove_file(test_file).unwrap();
-        }
-        
+        let test_file = create_test_file("");        
         let (read, write) = unsafe { MessageFileStore::new(
             &test_file,
             2048).unwrap()
@@ -511,4 +620,38 @@ mod tests {
             assert_eq!(body.len(), 8);
         }).unwrap();
     }
+
+    #[test]
+    pub fn read_block_test() {
+        let test_file = create_test_file("read_block_test");
+        let (read, write) = unsafe { MessageFileStore::new(
+            &test_file,
+            2048).unwrap()
+        };
+        
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        let mut pos = write.write(&0, &2, &1, &bytes[0..8]).unwrap();
+        pos = write.write(&pos, &2, &2, &bytes[0..8]).unwrap();
+        pos = write.write(&pos, &2, &3, &bytes[0..9]).unwrap();
+        write.write(&pos, &2, &4, &bytes[0..7]).unwrap();
+        write.flush().unwrap();
+        let r = read.read_block(&0, &3, &1024).unwrap();
+        // Test reading the first 3 messages.
+        assert_eq!(1, r.message_id_start);
+        assert_eq!(3, r.message_id_end);
+        assert_eq!(96, r.next_pos);
+
+        // Test reading a maximum size.
+        let r = read.read_block(&0, &3, &64).unwrap();
+        assert_eq!(1, r.message_id_start);
+        assert_eq!(2, r.message_id_end);
+        assert_eq!(64, r.next_pos);
+
+        // Test reading till the end.
+        let r = read.read_block(&0, &10, &1024).unwrap();
+        assert_eq!(1, r.message_id_start);
+        assert_eq!(4, r.message_id_end);
+        assert_eq!(128, r.next_pos);
+    }
+
 }

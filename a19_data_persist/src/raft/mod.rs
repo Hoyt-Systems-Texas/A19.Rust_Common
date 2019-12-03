@@ -21,7 +21,7 @@ pub mod network;
 
 const EVENT_FILE_POSTFIX: &str = "events";
 const COMMIT_FILE_POSTIX: &str = "commit";
-const HEADER_SIZE: u64 = 512;
+const HEADER_SIZE_BYTES: u64 = 128;
 
 use memmap::MmapMut;
 use a19_concurrent::buffer::DirectByteBuffer;
@@ -99,7 +99,9 @@ struct FileWriteInfo {
 /// |                                                               | 
 /// +---------------------------------------------------------------+ 480 | 60
 /// | Length of Commit                                              |
-/// +---------------------------------------------------------------+ 512 | 64
+/// +-------------------------------+-------------------------------+ 512 | 64
+/// | Votes (Leader Only)           |                               |
+/// +-------------------------------+-------------------------------+ 544 | 72
 /// ..                                                              |
 /// |                                                               ...
 /// +---------------------------------------------------------------+ 1024 | 128
@@ -116,6 +118,7 @@ const FILE_ID: usize = 40;
 const FILE_POSITION_OFFSET: usize = 44;
 const MAX_MESSAGE_ID: usize = 52;
 const LENGTH_OF_COMMIT: usize = 60;
+const VOTES: usize = 64;
 
 trait CommitFile {
     fn set_term(&mut self, pos: &usize, val: &u64) -> &mut Self;
@@ -143,6 +146,10 @@ trait CommitFile {
     fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self;
     fn length_of_commit(&self, pos: &usize) -> u32;
     fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self;
+    fn set_votes(&mut self, pos: &usize, votes: u16) -> &mut Self;
+    fn inc_votes(&mut self, pos: &usize) -> u16;
+    fn get_votes(&mut self, pos: &usize) -> u16;
+
 }
 
 impl CommitFile for MemoryMappedInt {
@@ -304,6 +311,27 @@ impl CommitFile for MemoryMappedInt {
     }
 
     #[inline]
+    fn set_votes(&mut self, pos: &usize, votes: u16) -> &mut Self {
+        let pos = VOTES + *pos;
+        self.put_u16(&pos, votes);
+        self
+    }
+
+    #[inline]
+    fn inc_votes(&mut self, pos: &usize) -> u16 {
+        let pos = VOTES + *pos;
+        let v = self.get_u16(&pos) + 1;
+        self.put_u16(&pos, v);
+        v
+    }
+
+    #[inline]
+    fn get_votes(&mut self, pos: &usize) -> u16 {
+        let pos = VOTES + *pos;
+        self.get_u16(&pos)
+    }
+
+    #[inline]
     fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self {
         self.set_term(pos, &term.term_id)
             .set_version(pos, &term.version)
@@ -319,6 +347,7 @@ impl CommitFile for MemoryMappedInt {
             ;
         self
     }
+
 }
 
 /// A term committed in the raft protocol.
@@ -381,7 +410,7 @@ struct MessageReader {
     file_id: u32,
 }
 
-/// Represents the write stream.
+/// Represents the write stream.  Would only be used if we are the current leader.
 pub struct PersistedMessageWriteStream {
     /// The buffer we are writing to.
     buffer: MessageFileStoreWrite,
@@ -737,16 +766,48 @@ fn find_end_of_buffer(
     }
 }
 
+/// Represents a term file.
+struct TermFile {
+    /// The buffer we are writing to.
+    buffer: MemoryMappedInt,
+    /// The term start.
+    term_start: u64,
+    /// The id of the fiel.
+    file_id: u32,
+}
+
+enum TermPosResult {
+    /// The position of the term.
+    Pos(u64),
+    /// The term is to big.
+    Overflow,
+    /// The position is in a previous file.
+    Underflow,
+        
+}
+
+impl TermFile {
+    
+}
+
+pub struct PersistedCommitStreamLeader {
+    /// The current commit file.
+    commit_file: Rc<Cell<TermFile>>,
+    /// The current file we are placing new terms to.
+    new_term_file: Rc<Cell<TermFile>>,
+    max_message_id: Arc<AtomicU64>,
+    file_storage_directory: String,
+    file_prefix: String,
+    file_size: u64,
+    buffer: MessageFileStoreRead,
+}
+
 /// Represents the commit stream.
-pub struct PersistedCommitStream {
+pub struct PersistedCommitStreamFollower {
     /// The file we are currently commit messages to.
-    commit_file: Rc<Cell<MemoryMappedInt>>,
-    /// The id of the file we are commiting to.
-    commit_file_id: u32,
+    commit_file: Rc<Cell<TermFile>>,
     /// The new term file.
-    new_term_file: Rc<Cell<MemoryMappedInt>>,
-    /// The new term file id.
-    new_term_file_id: u32,
+    new_term_file: Rc<Cell<TermFile>>,
     /// The current max committed file id.
     max_message_id: Arc<AtomicU64>,
     /// The storage directory.
@@ -755,6 +816,8 @@ pub struct PersistedCommitStream {
     file_prefix: String,
     /// The size of the file to create.
     file_size: u64,
+    /// The buffer we are writing.
+    buffer: MessageFileStoreWrite
 }
 
 #[derive(Debug, Clone)]
@@ -1470,6 +1533,7 @@ mod tests {
                 panic!("Did not find the position.");
             }
         }
+        // Test to see if we can read the buffer.
         let mut reader = PersistedMessageReadStream::new(
             1,
             0,
