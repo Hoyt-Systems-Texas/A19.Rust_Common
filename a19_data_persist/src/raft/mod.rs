@@ -24,30 +24,55 @@ const COMMIT_FILE_POSTIX: &str = "commit";
 const HEADER_SIZE_BYTES: u64 = 128;
 const HEADER_SIZE_BITS: u64 = 128 * 8;
 
-use memmap::MmapMut;
-use a19_concurrent::buffer::DirectByteBuffer;
-use a19_concurrent::buffer::align;
+use a19_concurrent::buffer::{align, DirectByteBuffer};
+use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
+use a19_concurrent::buffer::ring_buffer::{ ManyToOneBufferReader, create_many_to_one, ManyToOneBufferWriter };
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead, MessageRead};
 use crate::file;
-use a19_concurrent::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
 use std::sync::{ Arc, Mutex, atomic };
 use std::sync::atomic::{ AtomicU64, AtomicU8 };
 use std::thread::{spawn, JoinHandle};
+use std::thread;
 use std::cmp::Ordering;
 use std::fs::*;
 use std::io::{Error, ErrorKind};
 use std::io;
-use std::collections::{ HashMap, VecDeque };
-use std::io::{BufWriter, BufReader};
-use std::marker::PhantomData;
 use std::io::prelude::*;
 use std::path::{Path, MAIN_SEPARATOR, PathBuf};
 use std::vec::Vec;
 use std::rc::Rc;
 use std::cell::Cell;
+use futures::{Future, Poll, Async, oneshot, Oneshot, Canceled, Complete};
 
 #[path="../target/a19_data_persist/message/persisted_file_generated.rs"]
+
+/// Represents a future from a queue that is processed async.
+pub struct QueueFuture<TOut> {
+    oneshot: Oneshot<TOut>
+}
+
+impl<TOut> QueueFuture<TOut> {
+    
+    pub fn new() -> (Self, Complete<TOut>) {
+        let (c, p) = oneshot::<TOut>();
+        (
+            QueueFuture{
+                oneshot: p
+            },
+            c
+        )
+    }
+}
+
+impl<TOut> Future for QueueFuture<TOut> {
+    type Item = TOut;
+    type Error = Canceled;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.oneshot.poll()
+    }
+}
 
 /// Represents a message that was read in.
 pub struct MessageInfo<'a> {
@@ -445,6 +470,7 @@ impl PersistedMessageWriteStream {
     /// `file_storage_directory` - The file storage directory.
     /// `file_prefix` - The prefix for the file.
     /// `file_size` - The size of the file.
+    /// `max_message_id` - The current maximum message id.
     fn new(
         start_file_id: u32,
         file_storage_directory: String,
@@ -522,8 +548,6 @@ impl PersistedMessageWriteStream {
                 match e {
                     file::Error::NotEnoughSpace{message_size, position, capacity, remaining}
                     => {
-                        // TODO write a message type to indicate the end of the file.  Check to see
-                        // if we are at the end of the file before doing this.
                         self.buffer.write(&self.current_pos, &-1, &std::u64::MAX, &[0, 0])?;
                         self.file_id += 1; 
                         self.current_pos = 0;
@@ -907,18 +931,33 @@ struct FileStorageInfo {
     max_file_size: u64,
 }
 
+struct AddMessageRs {
+    position_start: usize,
+    complete: Complete<()>
+}
+
+impl AddMessageRs {
+    fn new(
+        position_start: usize,
+        complete: Complete<()>
+    ) -> Self {
+        AddMessageRs {
+            position_start,
+            complete
+        }
+    }
+}
+
 /// The persisted file.
 pub struct PersistedMessageFile<FRead>
     where FRead:MessageProcessor
 {
-    /// The memory mapped file we are reading.
-    primary_writer: PersistedMessageWriteStream,
     /// The buffer to read.
-    primary_reader: PersistedMessageReadStream<FRead>,
+    primary_reader: Arc<PersistedMessageReadStream<FRead>>,
     /// The maximum file size before it roles overs.
     max_file_size: usize,
     /// The current state of the node.
-    current_state: RaftNodeState,
+    current_state: Arc<RaftNodeState>,
     /// The thread that processes the commit.
     commit_join: Option<JoinHandle<u32>>,
     /// The writer joiner.
@@ -926,7 +965,19 @@ pub struct PersistedMessageFile<FRead>
     /// The reader joiner.
     reader_join: Option<JoinHandle<u32>>,
     /// The atomic u8.
-    stop: Arc<AtomicU8>
+    stop: Arc<AtomicU8>,
+    /// The incoming buffer to read the messages from.
+    incoming_reader: Arc<ManyToOneBufferReader>,
+    /// The incoming byte buffer to write the messages to.
+    incoming_writer: ManyToOneBufferWriter,
+    /// The incoming reader queue that contains the messages to complete.
+    incoming_queue_reader: Arc<MpscQueueReceive<AddMessageRs>>,
+    /// The writer where to write the messages to.
+    incoming_queue_writer: MpscQueueWrap<AddMessageRs>,
+    max_message_id: Arc<AtomicU64>,
+    file_storage_directory: String,
+    file_prefix: String,
+    write_start_file_id: u32,
 }
 
 ///  The file format for the messages.  The goal is to have raft replicate the messages onto the
@@ -1585,6 +1636,62 @@ fn find_last_commit_pos(
     }
 }
 
+/// Starts the write thread.
+/// # Arguments
+/// `stop` - We should stop processing.
+/// `receiver` - The queue we are receiving from.
+/// `peding_queue` - The pending queue.
+fn write_thread_single(
+    stop: Arc<AtomicU8>,
+    receiver: Arc<MpscQueueReceive<AddMessageRs>>,
+    pending_queues: Arc<ManyToOneBufferReader>,
+    max_message_id: Arc<AtomicU64>,
+    commit_file_size: usize,
+    file_storage_directory: String,
+    file_prefix: String,
+    file_id_start: u32) -> JoinHandle<u32> {
+    thread::spawn(move||{
+        let mut file_buffer = PersistedMessageWriteStream::new(
+            file_id_start,
+            file_storage_directory,
+            file_prefix,
+            commit_file_size,
+            max_message_id).unwrap();
+        loop {
+            if stop.load(atomic::Ordering::Relaxed) > 0 {
+                break 0
+            } else {
+                let r = pending_queues.read(|msg_type, bytes|{
+                    file_buffer.add_message(
+                        &msg_type,
+                        &1,
+                        bytes).unwrap();
+                }, 100);
+                pending_queues.read_completed(&r);
+                loop {
+                    match receiver.peek() {
+                        Some(value) => {
+                            if value.position_start <= r.start {
+                                match receiver.poll() {
+                                    Some(value) => {
+                                        value.complete.send(()).unwrap();
+                                    },
+                                    None => {
+
+                                    }
+                                }
+                            }
+                        },
+                        None => {
+                            break
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 impl<FRead> PersistedMessageFile<FRead> 
     where FRead: MessageProcessor
 {
@@ -1596,6 +1703,7 @@ impl<FRead> PersistedMessageFile<FRead>
     /// `max_file_size` - The maximum file size.
     /// `commit_file_size` - The maximum commit file size.
     /// `message_processor` - The message processor.
+    /// `incoming_buffer_size` - The incoming buffer size.
     /// # Returns
     /// The single node info.
     pub fn new_single_node(
@@ -1603,7 +1711,9 @@ impl<FRead> PersistedMessageFile<FRead>
         file_prefix: String,
         max_file_size: usize,
         commit_file_size: usize,
-        message_processor: FRead) -> Self {
+        message_processor: FRead,
+        incoming_buffer_size: &usize,
+        incoming_queue_size: &usize) -> Self {
         let store_path = Path::new(&file_storage_directory);
         if !store_path.exists() {
             create_dir_all(&file_storage_directory).unwrap();
@@ -1613,21 +1723,15 @@ impl<FRead> PersistedMessageFile<FRead>
         let message_files = collection.message_files.lock().unwrap();
         let writer = if message_files.len() > 0 {
             let file: &MessageFileInfo = message_files.get(message_files.len() - 1).unwrap();
-            PersistedMessageWriteStream::new(
-                file.file_id,
-                file_storage_directory.clone(),
-                file_prefix.clone(),
-                max_file_size,
-                max_message.clone()
-            ).unwrap()
+            file.file_id
         } else {
             PersistedMessageWriteStream::new(
                 1,
                 file_storage_directory.clone(),
                 file_prefix.clone(),
                 max_file_size,
-                max_message.clone()
-            ).unwrap()
+                max_message.clone()).unwrap();
+            1
         };
         // Since we don't have snapshots we have to start form the beginning.
         let reader = PersistedMessageReadStream::new(
@@ -1651,7 +1755,7 @@ impl<FRead> PersistedMessageFile<FRead>
                 RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
                         term.clone(),
                         term.clone(),
-                        max_message,
+                        max_message.clone(),
                         file_storage_directory.clone(),
                         file_prefix.clone(),
                         commit_file_size
@@ -1676,28 +1780,85 @@ impl<FRead> PersistedMessageFile<FRead>
                 RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
                         term.clone(),
                         term.clone(),
-                        max_message,
+                        max_message.clone(),
                         file_storage_directory.clone(),
                         file_prefix.clone(),
                         commit_file_size
                 ))
             }
         };
+        let (incoming_reader, incoming_writer) = create_many_to_one(incoming_buffer_size);
+        let (queue_writer, queue_reader) = MpscQueueWrap::new(*incoming_queue_size);
         PersistedMessageFile {
             max_file_size,
-            current_state: commit,
-            primary_writer: writer,
-            primary_reader: reader,
+            current_state: Arc::new(commit),
+            primary_reader: Arc::new(reader),
             commit_join: None,
             writer_join: None,
             reader_join: None,
-            stop: Arc::new(AtomicU8::new(0))
+            stop: Arc::new(AtomicU8::new(0)),
+            incoming_reader: Arc::new(incoming_reader),
+            incoming_writer,
+            incoming_queue_reader: Arc::new(queue_reader),
+            incoming_queue_writer: queue_writer,
+            max_message_id: max_message,
+            file_storage_directory: file_storage_directory.clone(),
+            file_prefix: file_prefix.clone(),
+            write_start_file_id: writer
         }
     }
 
     /// Used to startup the threads for processing the requests.
-    fn start(&mut self) {
+    pub fn start(&mut self) {
+        match self.reader_join {
+            Some(_) => {
+                self.writer_join = Some(write_thread_single(
+                    self.stop.clone(),
+                    self.incoming_queue_reader.clone(),
+                    self.incoming_reader.clone(),
+                    self.max_message_id.clone(),
+                    self.max_file_size,
+                    self.file_storage_directory.clone(),
+                    self.file_prefix.clone(),
+                    self.write_start_file_id
+                ));
+            },
+            None => {
 
+            }
+        }
+    }
+
+    /// Tells the processes to stop.
+    pub fn stop(&mut self) {
+        self.stop.store(1, atomic::Ordering::Release);
+        self.writer_join.take().map(JoinHandle::join);
+        self.reader_join.take().map(JoinHandle::join);
+        self.commit_join.take().map(JoinHandle::join);
+    }
+
+    /// Writers a message to the buffer.
+    /// # Arguments
+    /// `msg_type_id` - The type of the message we are writing.
+    /// `bytes` - The bytes to write the buffer.
+    /// # Returns
+    /// The future that gets completed.
+    pub fn write(&mut self, msg_type_id: i32, bytes: &[u8]) -> Option<QueueFuture<()>> {
+        let (queue_future, complete_on) = QueueFuture::new();
+        match self.incoming_writer.write(
+            msg_type_id,
+            bytes) {
+            Some(p) => {
+                let add_message = AddMessageRs::new(p, complete_on);
+                if !self.incoming_queue_writer.offer(add_message) {
+                    thread::sleep_ms(2);
+                }
+                Some(queue_future)
+            },
+            None => {
+                None
+            }
+        }
     }
 }
 
@@ -1706,8 +1867,10 @@ mod tests {
 
     use std::fs::{remove_dir_all, create_dir_all};
     use std::sync::Arc;
+    use std::thread;
     use std::sync::atomic::AtomicU64;
     use std::path::Path;
+    use a19_concurrent::buffer::ring_buffer::create_many_to_one;
     use crate::file::{ MessageFileStore, MessageRead };
     use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult, MessageProcessor};
 
@@ -1793,13 +1956,18 @@ mod tests {
             remove_dir_all(&file_storage_directory).unwrap();
         }
         let processor = MessageProcessorInt::new();
-        let single_node = PersistedMessageFile::new_single_node(
+        let mut single_node = PersistedMessageFile::new_single_node(
             file_storage_directory,
             TEST_PREFIX.to_owned(),
             5000,
             5000,
-            processor
+            processor,
+            &0x40,
+            &0x40
         );
+        single_node.start();
+        thread::sleep_ms(20);
+        single_node.stop();
     }
 
     struct MessageProcessorInt {

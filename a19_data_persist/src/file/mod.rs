@@ -89,6 +89,7 @@ impl MessageFileStoreWrite {
 }
 
 unsafe impl Send for MessageFileStoreWrite {}
+unsafe impl Sync for MessageFileStoreWrite {}
 
 /// Represents the storage of files.   It supports a singler writer with multiple readers.  This is
 /// the building blocks for raft protocol.
@@ -96,6 +97,9 @@ pub struct MessageFileStore {
     /// The buffer we are writing to.
     buffer: MemoryMappedInt
 }
+
+unsafe impl Send for MessageFileStore {}
+unsafe impl Sync for MessageFileStore {}
 
 const MESSAGE_ID: usize = 8;
 const MESSAGE_TYPE: usize = 4;

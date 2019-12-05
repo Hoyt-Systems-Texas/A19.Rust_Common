@@ -1,12 +1,82 @@
 use std::sync::atomic::{Ordering, fence};
+use std::cell::UnsafeCell;
+use std::sync::Arc;
 use crate::buffer::{DirectByteBuffer, align};
 use crate::queue::PaddedUsize;
 use crate::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
 
 pub struct BytesReadInfo {
-    start: usize,
-    bytes_read: usize,
-    messages_read: u32
+    /// The starting index.
+    pub start: usize,
+    pub bytes_read: usize,
+    pub messages_read: u32,
+    /// The ending index.
+    pub end: usize
+}
+
+pub struct ManyToOneBufferReader {
+    buffer: Arc<UnsafeCell<ManyToOneBufferInt>>
+}
+
+impl ManyToOneBufferReader {
+
+    /// Used to read in a series of messages.
+    /// # Arguments
+    /// `act` - The function to call to read in the message.
+    /// `limit` - The maximum number of messages to process.
+    pub fn read<'a, F>(
+        &'a self,
+        act: F,
+        limit: u32) -> BytesReadInfo 
+        where F:FnMut(i32, &[u8])
+    {
+        let buffer = unsafe {&mut *self.buffer.get()};
+        buffer.read(act, limit)
+    }
+
+    /// Called when we are done reading the bytes in.
+    /// # Arguments
+    /// `read_info` - The info we are reading.
+    pub fn read_completed(&self, read_info: &BytesReadInfo) {
+        let buffer = unsafe {&mut *self.buffer.get()};
+        buffer.read_completed(read_info);
+    }
+}
+
+unsafe impl Send for ManyToOneBufferReader {}
+unsafe impl Sync for ManyToOneBufferReader {}
+
+pub struct ManyToOneBufferWriter {
+    buffer: Arc<UnsafeCell<ManyToOneBufferInt>>
+}
+
+impl ManyToOneBufferWriter {
+
+    /// Writes to the buffer.  This call is thread safe.
+    /// # Arguments
+    /// `msg_type_id` - The type of the message.
+    /// `buffer` - The buffer we are copying.
+    /// # Returns
+    /// Some with the index number otherwise the position.
+    pub fn write(&self, msg_type_id: i32, buffer: &[u8]) -> Option<usize> {
+        let me = unsafe {&mut *self.buffer.get()};
+        me.write(msg_type_id, buffer)
+    }
+}
+
+unsafe impl Send for ManyToOneBufferWriter {}
+unsafe impl Sync for ManyToOneBufferWriter {}
+
+/// Creates a many to one buffer with the writer and reader objects.
+/// # Arguments
+/// `size` - The size to create the buffer.
+pub fn create_many_to_one(size: &usize) -> (ManyToOneBufferReader, ManyToOneBufferWriter) {
+    let cell = Arc::new(UnsafeCell::new(ManyToOneBufferInt::new(*size)));
+    (ManyToOneBufferReader {
+        buffer: cell.clone()
+    }, ManyToOneBufferWriter {
+        buffer: cell.clone()
+    })
 }
 
 struct ManyToOneBufferInt {
@@ -16,6 +86,9 @@ struct ManyToOneBufferInt {
     buffer: AtomicByteBufferInt,
     mask: usize
 }
+
+unsafe impl Sync for ManyToOneBufferInt {}
+unsafe impl Send for ManyToOneBufferInt {}
 
 const HEADER_SIZE: usize = 8;
 const ALIGNMENT: usize = HEADER_SIZE;
@@ -61,16 +134,20 @@ pub trait RingBuffer {
     /// # Arguments
     /// `msg_type_id` - The type of the message.
     /// `buffer` - The buffer to write.
-    fn write(&mut self, msg_type_id: i32, buffer: &[u8]) -> bool;
+    fn write(&mut self, msg_type_id: i32, buffer: &[u8]) -> Option<usize>;
 
-    /// Used to read the next message.
+    /// Used to read in a series of messages.
     /// # Arguments
     /// `act` - The function to call to read in the message.
     /// `limit` - The maximum number of messages to process.
-    fn read<'a>(
+    fn read<'a, F>(
         &'a mut self,
-        act: fn(msgType: i32, bytes: &'a [u8]),
-        limit: u32) -> BytesReadInfo;
+        act: F,
+        limit: u32) -> BytesReadInfo
+        where F:FnMut(i32, &'a [u8]);
+
+    /// Called when we are done reading the bytes in.
+    fn read_completed(&mut self, read_info: &BytesReadInfo);
 
     /// The maximum length of a message.
     fn max_message_length(&self) -> usize;
@@ -84,15 +161,12 @@ pub trait RingBuffer {
     /// The current size of the buffer.
     fn size(&self) -> usize;
 
-    /// Called when we are done reading the bytes in.
-    fn read_completed(&mut self, read_info: &BytesReadInfo);
-
 }
 
 impl ManyToOneBufferInt {
 
     /// Used to crate a new ring buffer.
-    fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         let buffer = AtomicByteBufferInt::new(size);
         let mask = buffer.capacity() - 1;
         ManyToOneBufferInt {
@@ -115,9 +189,9 @@ impl RingBuffer for ManyToOneBufferInt {
     /// # Arguments
     /// `msg_type_id` - The type of the message.
     /// `buffer` - The buffer to write.
-    fn write(&mut self, msg_type_id: i32, buffer: &[u8]) -> bool {
+    fn write(&mut self, msg_type_id: i32, buffer: &[u8]) -> Option<usize> {
         if msg_type_id < 0 {
-            false
+            None
         } else {
             let record_length: usize = buffer.len() + HEADER_SIZE;
             let required_capacity = align(record_length, ALIGNMENT);
@@ -133,10 +207,10 @@ impl RingBuffer for ManyToOneBufferInt {
                         &message_body_offset(&i),
                         buffer);
                     self.buffer.put_i32_volatile(&size_offset(&i), &record_length_i);
-                    true
+                    Some(i)
                 },
                 None => {
-                    false
+                    None
                 }
             }
         }
@@ -146,10 +220,12 @@ impl RingBuffer for ManyToOneBufferInt {
     /// # Arguments
     /// `act` - The function to call to read in the message.
     /// `limit` - The maximum number of messages to process.
-    fn read<'a>(
+    fn read<'a, F>(
         &'a mut self,
-        act: fn(msgType:i32, bytes: &'a [u8]),
-        limit: u32) -> BytesReadInfo {
+        mut act: F,
+        limit: u32) -> BytesReadInfo 
+        where F:FnMut(i32, &'a [u8])
+        {
         let capcity = self.capacity();
         let head = self.consumer.counter.load(Ordering::Relaxed);
         let head_index = head & self.mask;
@@ -189,7 +265,8 @@ impl RingBuffer for ManyToOneBufferInt {
         BytesReadInfo {
             start: head_index,
             bytes_read,
-            messages_read
+            messages_read,
+            end: head_index + bytes_read
         }
     }
 
@@ -292,7 +369,7 @@ impl ManyToOneBufferInt {
 
 #[cfg(test)]
 mod tests {
-    use crate::buffer::ring_buffer::{RingBuffer, ManyToOneBufferInt};
+    use crate::buffer::ring_buffer::{RingBuffer, ManyToOneBufferInt, create_many_to_one};
     use std::vec::Vec;
 
     #[test]
@@ -303,7 +380,7 @@ mod tests {
         let written = buffer.write(
             1,
             &bytes);
-        assert!(written);
+        assert_eq!(written, Some(0));
         let result = buffer.read(|msg_type_id, buffer| {
             assert_eq!(1, msg_type_id);
         }, 1000);
@@ -315,15 +392,27 @@ mod tests {
         let mut buffer = ManyToOneBufferInt::new(0x40);
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16);
         for i in 0..4 {
-            let written = buffer.write(
+            match buffer.write(
                 1,
-                &bytes);
-            assert!(written);
+                &bytes) {
+                Some(i) => {
+                },
+                None => {
+                    assert!(false);
+                }
+            }
+            
         }
-        let written = buffer.write(
+        match buffer.write(
             1,
-            &bytes);
-        assert!(!written);
+            &bytes) {
+            Some(i) => {
+                assert!(false)
+            },
+            None => {
+
+            }
+        }
         let result = buffer.read(|msg_type_id, buffer| {
             assert_eq!(1, msg_type_id);
         }, 1000);
@@ -331,10 +420,16 @@ mod tests {
         assert_eq!(4, result.messages_read);
         buffer.read_completed(&result);
         for i in 0..4 {
-            let written = buffer.write(
+            match buffer.write(
                 1,
-                &bytes);
-            assert!(written);
+                &bytes) {
+                Some(_) => {
+
+                },
+                None => {
+                    assert!(false);
+                }
+            }
         }
     }
 
@@ -343,20 +438,33 @@ mod tests {
         let mut buffer = ManyToOneBufferInt::new(0x40);
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
         for i in 0..2 {
-            let written = buffer.write(
+            match buffer.write(
                 1,
-                &bytes);
-            assert!(written);
+                &bytes) {
+                Some(_) => {
+
+                },
+                None => {
+                    assert!(false);
+                }
+            }
         }
         let result = buffer.read(|msg_type_id, buffer| {
             assert_eq!(1, msg_type_id);
         }, 1000);
         assert_eq!(2, result.messages_read);
         buffer.read_completed(&result);
-        let written = buffer.write(
+        match buffer.write(
             1,
-            &bytes);
-        assert!(written);
+            &bytes) {
+            Some(_) => {
+
+            },
+            None => {
+                assert!(false);
+            }
+        }
+        
         let result = buffer.read(|msg_type_id, buffer| {
             assert_eq!(1, msg_type_id);
         }, 1000);
@@ -367,5 +475,26 @@ mod tests {
         }, 1000);
         assert_eq!(1, result.messages_read);
         buffer.read_completed(&result);
+    }
+
+    #[test]
+    pub fn create_many_to_one_dual() {
+        let (reader, writer) = create_many_to_one(&0x40);
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        for i in 0..2 {
+            match writer.write(1, &bytes) {
+                Some(_) => {
+
+                },
+                None => {
+                    assert!(false);
+                }
+            }
+        }
+        let result = reader.read(|msg_type_id, buffer| {
+            assert_eq!(1, msg_type_id);
+        }, 1);
+        reader.read_completed(&result);
+        assert_eq!(1, result.messages_read);
     }
 }

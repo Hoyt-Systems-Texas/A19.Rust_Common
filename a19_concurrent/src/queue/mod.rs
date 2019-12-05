@@ -37,4 +37,5 @@ pub trait ConcurrentQueue<T> {
     /// # Returns
     /// The number of items that where returned.
     fn drain(&mut self, act: fn(T), limit: usize) -> usize;
+
 }

@@ -46,6 +46,7 @@ impl<T> MpscQueueWrap<T> {
 }
 
 unsafe impl<T> Send for MpscQueueReceive<T> {}
+unsafe impl<T> Sync for MpscQueueReceive<T> {}
 
 impl <T> MpscQueueReceive<T> {
 
@@ -54,6 +55,11 @@ impl <T> MpscQueueReceive<T> {
             let queue = &mut *self.queue.get();
             queue.poll()
         }
+    }
+
+    pub fn peek<'a>(&'a self) -> Option<&'a T> {
+        let queue = unsafe { &mut *self.queue.get() };
+        queue.peek()
     }
 
     pub fn drain(&self, act: fn(T), limit: usize) -> usize {
@@ -107,6 +113,34 @@ impl<T> MpscQueue<T> {
     fn pos(&self, index: usize) -> usize {
         index & self.mask
     }
+
+    /// Used to get the initial value of the queue.
+    /// # Returns
+    /// Either None if no value i there or some with a reference to the value.
+    fn peek<'a>(&'a self) -> Option<&'a T> {
+        let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
+        let p_index = self.producer.counter.load(Ordering::Relaxed);
+        if p_index > s_index {
+            let last_pos = self.pos(s_index);
+            let node = unsafe{self.ring_buffer.get_unchecked(last_pos)};
+            let node_id = node.id.load(Ordering::Acquire);
+            // Verify the node id matches the index id.
+            if node_id == s_index {
+                match &node.value {
+                    Some(value) => {
+                        Some(value)
+                    },
+                    None => {
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        } 
+    } 
 }
 
 impl<T> ConcurrentQueue<T> for MpscQueue<T> {
