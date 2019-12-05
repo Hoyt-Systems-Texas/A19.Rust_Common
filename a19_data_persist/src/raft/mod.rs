@@ -1674,7 +1674,14 @@ fn write_thread_single(
                             if value.position_start <= r.start {
                                 match receiver.poll() {
                                     Some(value) => {
-                                        value.complete.send(()).unwrap();
+                                        match value.complete.send(()) {
+                                            Ok(_) => {
+
+                                            },
+                                            _ => {
+
+                                            }
+                                        }
                                     },
                                     None => {
 
@@ -1811,7 +1818,7 @@ impl<FRead> PersistedMessageFile<FRead>
     /// Used to startup the threads for processing the requests.
     pub fn start(&mut self) {
         match self.reader_join {
-            Some(_) => {
+            None => {
                 self.writer_join = Some(write_thread_single(
                     self.stop.clone(),
                     self.incoming_queue_reader.clone(),
@@ -1823,7 +1830,7 @@ impl<FRead> PersistedMessageFile<FRead>
                     self.write_start_file_id
                 ));
             },
-            None => {
+            Some(_) => {
 
             }
         }
@@ -1868,6 +1875,7 @@ mod tests {
     use std::fs::{remove_dir_all, create_dir_all};
     use std::sync::Arc;
     use std::thread;
+    use futures::future::Future;
     use std::sync::atomic::AtomicU64;
     use std::path::Path;
     use a19_concurrent::buffer::ring_buffer::create_many_to_one;
@@ -1966,7 +1974,9 @@ mod tests {
             &0x40
         );
         single_node.start();
-        thread::sleep_ms(20);
+        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        let r = single_node.write(1, &bytes[0..8]).unwrap();
+        r.wait();
         single_node.stop();
     }
 
