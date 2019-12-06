@@ -19,7 +19,7 @@ pub struct SpscQueueSendWrap<T> {
 unsafe impl<T> Send for SpscQueueSendWrap<T> {}
 
 impl<T> SpscQueueSendWrap<T> {
-    fn new(queue_size: usize) -> (SpscQueueSendWrap<T>, SpscQueueReceiveWrap<T>) {
+    pub fn new(queue_size: usize) -> (SpscQueueSendWrap<T>, SpscQueueReceiveWrap<T>) {
         let queue = Arc::new(UnsafeCell::new(SpscQueue::new(queue_size)));
         let send_queue = queue.clone();
         (SpscQueueSendWrap{
@@ -29,11 +29,16 @@ impl<T> SpscQueueSendWrap<T> {
         })
     }
 
-    fn offer(&self, v: T) -> bool {
+    pub fn offer(&self, v: T) -> bool {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.offer(v)
         }
+    }
+
+    fn peek<'a>(&'a self) -> Option<&'a T> {
+        let queue = unsafe {&mut *self.queue.get()};
+        queue.peek()
     }
 }
 
@@ -45,14 +50,14 @@ unsafe impl<T> Send for SpscQueueReceiveWrap<T> {}
 
 impl<T> SpscQueueReceiveWrap<T> {
 
-    fn poll(&self) -> Option<T> {
+    pub fn poll(&self) -> Option<T> {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.poll()
         }
     }
 
-    fn drain(&self, act: fn(T), limit: usize) -> usize {
+    pub fn drain(&self, act: fn(T), limit: usize) -> usize {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.drain(act, limit)
@@ -102,6 +107,31 @@ impl<T> SpscQueue<T> {
     #[inline]
     fn pos(&self, index: usize) -> usize {
         index & self.mask
+    }
+
+    fn peek<'a>(&'a self) -> Option<&'a T> {
+        let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
+        let p_index = self.producer.counter.load(Ordering::Relaxed);
+        if p_index > s_index {
+            let last_pos = self.pos(s_index);
+            let node = unsafe{self.ring_buffer.get_unchecked(last_pos)};
+            let node_id = node.id.load(Ordering::Acquire);
+            // Verify the node id matches the index id.
+            if node_id == s_index {
+                match &node.value {
+                    Some(value) => {
+                        Some(value)
+                    },
+                    None => {
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        } 
     }
 }
 

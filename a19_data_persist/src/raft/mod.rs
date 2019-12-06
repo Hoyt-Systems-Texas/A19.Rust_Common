@@ -26,6 +26,7 @@ const HEADER_SIZE_BITS: u64 = 128 * 8;
 
 use a19_concurrent::buffer::{align, DirectByteBuffer};
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
+use a19_concurrent::queue::spsc_queue::{SpscQueueSendWrap, SpscQueueReceiveWrap};
 use a19_concurrent::buffer::ring_buffer::{ ManyToOneBufferReader, create_many_to_one, ManyToOneBufferWriter };
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use crate::file::{MessageFileStore, MessageFileStoreWrite, MessageFileStoreRead, MessageRead};
@@ -460,6 +461,8 @@ pub struct PersistedMessageWriteStream {
     file_size: usize,
     /// The current position.
     current_pos: usize,
+    /// The last message id in the file.
+    loaded_message_id: u64,
 }
 
 impl PersistedMessageWriteStream {
@@ -482,15 +485,15 @@ impl PersistedMessageWriteStream {
         let mut buffer = unsafe{MessageFileStore::open_write(&event_name, file_size)?};
         let mut file_id = start_file_id;
         let reader = unsafe{MessageFileStore::open_readonly(&event_name)?};
-        let pos = match find_end_of_buffer(&reader)? {
-            FindEmptySlotResult::Pos(p) => {
-                p
+        let (pos, last_msg_id) = match find_end_of_buffer(&reader)? {
+            FindEmptySlotResult::Pos(p, last_msg_id) => {
+                (p, last_msg_id)
             },
-            FindEmptySlotResult::Full => {
+            FindEmptySlotResult::Full(last_msg_id) => {
                 file_id += 1;
                 event_name = create_event_name(&file_storage_directory, &file_prefix, &file_id);
                 buffer = unsafe{MessageFileStore::open_write(&event_name, file_size)?};
-                0
+                (0, last_msg_id)
             }
         };
         Ok(PersistedMessageWriteStream {
@@ -500,7 +503,8 @@ impl PersistedMessageWriteStream {
             file_storage_directory,
             file_prefix,
             file_size,
-            current_pos: pos
+            current_pos: pos,
+            loaded_message_id: last_msg_id
         })
     }
 
@@ -532,7 +536,7 @@ impl PersistedMessageWriteStream {
         msg_type: &i32,
         msg_id: &u64,
         buffer: &[u8]
-    ) -> crate::file::Result<usize> {
+    ) -> crate::file::Result<(usize, u32)> {
         match self.buffer.write(
             &self.current_pos,
             msg_type,
@@ -542,11 +546,11 @@ impl PersistedMessageWriteStream {
             Ok(s) => {
                 self.current_pos += s;
                 self.max_message_id.store(*msg_id, atomic::Ordering::Release);
-                Ok(s)
+                Ok((s, self.file_id))
             },
             Err(e) => {
                 match e {
-                    file::Error::NotEnoughSpace{message_size, position, capacity, remaining}
+                    file::Error::Full
                     => {
                         self.buffer.write(&self.current_pos, &-1, &std::u64::MAX, &[0, 0])?;
                         self.file_id += 1; 
@@ -566,7 +570,7 @@ impl PersistedMessageWriteStream {
                             Ok(s) => {
                                 self.current_pos += s;
                                 self.max_message_id.store(*msg_id, atomic::Ordering::Release);
-                                Ok(s)
+                                Ok((s, self.file_id))
                             },
                             Err(e) => {
                                 Err(e)
@@ -760,8 +764,8 @@ fn find_message(
 
 #[derive(Clone, Debug)]
 enum FindEmptySlotResult {
-    Full,
-    Pos(usize)
+    Full(u64),
+    Pos(usize, u64)
 }
 
 /// Finds the end of the buffer.
@@ -772,24 +776,26 @@ enum FindEmptySlotResult {
 fn find_end_of_buffer(
     buffer: &MessageFileStoreRead) -> crate::file::Result<FindEmptySlotResult> {
     let mut pos = 0;
+    let mut last_id = 0;
     loop {
         match buffer.read_new(&pos) {
             Ok(msg) => {
                 if msg.messageId() == 0 {
-                    break Ok(FindEmptySlotResult::Pos(pos))
+                    break Ok(FindEmptySlotResult::Pos(pos, last_id))
                 } else if msg.messageId() == std::u64::MAX {
-                    break Ok(FindEmptySlotResult::Full)
+                    break Ok(FindEmptySlotResult::Full(last_id))
                 } else {
                     pos = msg.next_pos();
+                    last_id = msg.messageId();
                 }
             },
             Err(e) => {
                 match e {
                     crate::file::Error::NoMessage => {
-                        break Ok(FindEmptySlotResult::Pos(pos))
+                        break Ok(FindEmptySlotResult::Pos(pos, last_id))
                     },
                     crate::file::Error::PositionOutOfRange(_) => {
-                        break Ok(FindEmptySlotResult::Full)
+                        break Ok(FindEmptySlotResult::Full(last_id))
                     },
                     _ => {
                         break Err(e)
@@ -884,6 +890,8 @@ pub struct PersistedCommitSingleNode {
     file_prefix: String,
     /// The maximum size of the file.
     file_size: usize,
+    /// The id of the current term.
+    current_term_id: u64,
 }
 
 impl PersistedCommitSingleNode {
@@ -894,14 +902,16 @@ impl PersistedCommitSingleNode {
         max_message_id: Arc<AtomicU64>,
         file_storage_directory: String,
         file_prefix: String,
-        file_size: usize) -> Self {
+        file_size: usize,
+        current_term_id: u64) -> Self {
         PersistedCommitSingleNode {
             commit_file,
             new_term_file,
             max_message_id,
             file_storage_directory,
             file_prefix,
-            file_size
+            file_size,
+            current_term_id
         }
     }
 }
@@ -931,33 +941,63 @@ struct FileStorageInfo {
     max_file_size: u64,
 }
 
-struct AddMessageRs {
+struct AddMessageWriteRs {
     position_start: usize,
     complete: Complete<()>
 }
 
-impl AddMessageRs {
+struct AddMessageCommit {
+    file_pos: usize,
+    file_id: u32,
+    complete: Complete<()>
+}
+
+impl AddMessageWriteRs {
     fn new(
         position_start: usize,
         complete: Complete<()>
     ) -> Self {
-        AddMessageRs {
+        AddMessageWriteRs {
             position_start,
             complete
         }
     }
+
+}
+
+impl AddMessageCommit {
+
+    #[inline]
+    fn new(
+        file_pos: usize,
+        file_id: u32,
+        complete: Complete<()>
+    ) -> Self {
+        AddMessageCommit {
+            file_pos,
+            file_id,
+            complete
+        }
+    }
+
+    /// Checks to see if a messaged is processed based on the position.
+    #[inline]
+    fn is_processed(
+        &self,
+        position: &usize,
+        file_id: &u32,
+    ) -> bool {
+        (self.file_id == *file_id && self.file_pos < *position) 
+            || self.file_id < *file_id
+        
+    }
 }
 
 /// The persisted file.
-pub struct PersistedMessageFile<FRead>
-    where FRead:MessageProcessor
+pub struct PersistedMessageFile
 {
-    /// The buffer to read.
-    primary_reader: Arc<PersistedMessageReadStream<FRead>>,
     /// The maximum file size before it roles overs.
     max_file_size: usize,
-    /// The current state of the node.
-    current_state: Arc<RaftNodeState>,
     /// The thread that processes the commit.
     commit_join: Option<JoinHandle<u32>>,
     /// The writer joiner.
@@ -966,18 +1006,13 @@ pub struct PersistedMessageFile<FRead>
     reader_join: Option<JoinHandle<u32>>,
     /// The atomic u8.
     stop: Arc<AtomicU8>,
-    /// The incoming buffer to read the messages from.
-    incoming_reader: Arc<ManyToOneBufferReader>,
     /// The incoming byte buffer to write the messages to.
     incoming_writer: ManyToOneBufferWriter,
     /// The incoming reader queue that contains the messages to complete.
-    incoming_queue_reader: Arc<MpscQueueReceive<AddMessageRs>>,
-    /// The writer where to write the messages to.
-    incoming_queue_writer: MpscQueueWrap<AddMessageRs>,
+    incoming_queue_writer: MpscQueueWrap<AddMessageWriteRs>,
     max_message_id: Arc<AtomicU64>,
     file_storage_directory: String,
     file_prefix: String,
-    write_start_file_id: u32,
 }
 
 ///  The file format for the messages.  The goal is to have raft replicate the messages onto the
@@ -1583,7 +1618,7 @@ enum LastCommitPos {
 /// # Arguments
 /// `commit_files` - The commit files.
 fn find_last_commit_pos(
-    commit_files: Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
+    commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
     let commit_files = commit_files.lock().unwrap();
     let length = commit_files.len();
     if length == 0 {
@@ -1641,56 +1676,70 @@ fn find_last_commit_pos(
 /// `stop` - We should stop processing.
 /// `receiver` - The queue we are receiving from.
 /// `peding_queue` - The pending queue.
+/// `max_message_id` - The maximum message id.
+/// `event_file_size` - The file size for the event.
+/// `file_storage_directory` - The storage directory for the files.
+/// `file_prefix` - The file prefix.
+/// `file_id_start` - The starting file id.
 fn write_thread_single(
     stop: Arc<AtomicU8>,
-    receiver: Arc<MpscQueueReceive<AddMessageRs>>,
-    pending_queues: Arc<ManyToOneBufferReader>,
+    receiver: MpscQueueReceive<AddMessageWriteRs>,
+    pending_write_queue: ManyToOneBufferReader,
     max_message_id: Arc<AtomicU64>,
-    commit_file_size: usize,
+    event_file_size: usize,
     file_storage_directory: String,
     file_prefix: String,
-    file_id_start: u32) -> JoinHandle<u32> {
+    file_id_start: u32,
+    commit_writer: SpscQueueSendWrap<AddMessageCommit>) -> JoinHandle<u32> {
     thread::spawn(move||{
         let mut file_buffer = PersistedMessageWriteStream::new(
             file_id_start,
             file_storage_directory,
             file_prefix,
-            commit_file_size,
-            max_message_id).unwrap();
+            event_file_size,
+            max_message_id.clone()).unwrap();
+        let mut last_msg_id = file_buffer.loaded_message_id;
         loop {
             if stop.load(atomic::Ordering::Relaxed) > 0 {
                 break 0
             } else {
-                let r = pending_queues.read(|msg_type, bytes|{
-                    file_buffer.add_message(
+                let mut write_out_pos = 0;
+                let mut write_out_file = 0;
+                let r = pending_write_queue.read(|msg_type, bytes|{
+                    last_msg_id += 1;
+                    let (pos, file) = file_buffer.add_message(
                         &msg_type,
-                        &1,
+                        &last_msg_id,
                         bytes).unwrap();
+                    let write_out_pos = pos;
+                    let write_out_file = file;
                 }, 100);
-                pending_queues.read_completed(&r);
-                loop {
-                    match receiver.peek() {
-                        Some(value) => {
-                            if value.position_start <= r.start {
-                                match receiver.poll() {
-                                    Some(value) => {
-                                        match value.complete.send(()) {
-                                            Ok(_) => {
-
-                                            },
-                                            _ => {
-
+                pending_write_queue.read_completed(&r);
+                if r.messages_read > 0 {
+                    loop {
+                        match receiver.peek() {
+                            Some(value) => {
+                                if value.position_start <= r.start {
+                                    match receiver.poll() {
+                                        Some(value) => {
+                                            let message = AddMessageCommit::new(
+                                                write_out_pos,
+                                                write_out_file,
+                                                value.complete
+                                            );
+                                            if !commit_writer.offer(message) {
+                                                thread::sleep_ms(2);
                                             }
-                                        }
-                                    },
-                                    None => {
+                                        },
+                                        None => {
 
+                                        }
                                     }
                                 }
+                            },
+                            None => {
+                                break
                             }
-                        },
-                        None => {
-                            break
                         }
                     }
                 }
@@ -1699,142 +1748,143 @@ fn write_thread_single(
     })
 }
 
-impl<FRead> PersistedMessageFile<FRead> 
-    where FRead: MessageProcessor
-{
-
-    /// Used to create a new singe none distributed persisted file.
-    /// # Arguments
-    /// `file_storage_directory` - The directory to store the files.
-    /// `file_prefix` - The prefix for the file to create.
-    /// `max_file_size` - The maximum file size.
-    /// `commit_file_size` - The maximum commit file size.
-    /// `message_processor` - The message processor.
-    /// `incoming_buffer_size` - The incoming buffer size.
-    /// # Returns
-    /// The single node info.
-    pub fn new_single_node(
-        file_storage_directory: String,
-        file_prefix: String,
-        max_file_size: usize,
-        commit_file_size: usize,
-        message_processor: FRead,
-        incoming_buffer_size: &usize,
-        incoming_queue_size: &usize) -> Self {
-        let store_path = Path::new(&file_storage_directory);
-        if !store_path.exists() {
-            create_dir_all(&file_storage_directory).unwrap();
+fn commit_thread_single(
+    stop: Arc<AtomicU8>,
+    file_storage_directory: String,
+    file_prefix: String,
+    commit_file_size: usize,
+    max_message: Arc<AtomicU64>,
+    collection: Arc<FileCollection>,
+    pending_commit_queue: SpscQueueReceiveWrap<AddMessageCommit>
+) -> JoinHandle<u32> {
+    let commit = match find_last_commit_pos(&collection.commit_files) {
+        LastCommitPos::NoCommits => {
+            let file_id = 1;
+            let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&file_name);
+            let map = unsafe{MemoryMappedInt::new(&file_name, align(commit_file_size, HEADER_SIZE_BYTES as usize)).unwrap()};
+            let term = Rc::new(Cell::new(TermFile::new(map, 1, file_id)));
+            RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
+                    term.clone(),
+                    term.clone(),
+                    max_message.clone(),
+                    file_storage_directory.clone(),
+                    file_prefix.clone(),
+                    commit_file_size,
+                    1
+            ))
+        },
+        LastCommitPos::LastCommit{
+            start_term_id,
+            term_id,
+            file_id,
+            max_message_id,
+            path
+        } => {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(false)
+                .open(&path).unwrap();
+            let map = unsafe{MemoryMappedInt::open(file).unwrap()};
+            max_message.store(max_message_id, atomic::Ordering::Relaxed);
+            // Get the current term we need to find.
+            let term = Rc::new(Cell::new(TermFile::new(map, start_term_id, file_id)));
+            RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
+                    term.clone(),
+                    term.clone(),
+                    max_message.clone(),
+                    file_storage_directory.clone(),
+                    file_prefix.clone(),
+                    commit_file_size,
+                    term_id
+            ))
         }
-        let collection = FileCollection::new(file_storage_directory.clone(), file_prefix.clone());
-        let max_message = Arc::new(AtomicU64::new(0));
-        let message_files = collection.message_files.lock().unwrap();
-        let writer = if message_files.len() > 0 {
-            let file: &MessageFileInfo = message_files.get(message_files.len() - 1).unwrap();
-            file.file_id
-        } else {
-            PersistedMessageWriteStream::new(
-                1,
-                file_storage_directory.clone(),
-                file_prefix.clone(),
-                max_file_size,
-                max_message.clone()).unwrap();
-            1
-        };
-        // Since we don't have snapshots we have to start form the beginning.
-        let reader = PersistedMessageReadStream::new(
+    };
+    thread::spawn(move||{
+        0
+    })
+}
+
+pub fn startup_single_node<FRead>(
+    file_storage_directory: String,
+    file_prefix: String,
+    max_file_size: usize,
+    commit_file_size: usize,
+    message_processor: FRead,
+    incoming_buffer_size: &usize,
+    incoming_queue_size: &usize) -> PersistedMessageFile
+where FRead: MessageProcessor {
+    let store_path = Path::new(&file_storage_directory);
+    if !store_path.exists() {
+        create_dir_all(&file_storage_directory).unwrap();
+    }
+    let collection = Arc::new(FileCollection::new(file_storage_directory.clone(), file_prefix.clone()));
+    let max_message = Arc::new(AtomicU64::new(0));
+    let message_files = collection.message_files.lock().unwrap();
+    let writer = if message_files.len() > 0 {
+        let file: &MessageFileInfo = message_files.get(message_files.len() - 1).unwrap();
+        file.file_id
+    } else {
+        PersistedMessageWriteStream::new(
             1,
-            0,
-            max_message.clone(),
-            message_processor,
             file_storage_directory.clone(),
-            file_prefix.clone()).unwrap();
-        let commit = match find_last_commit_pos(collection.commit_files) {
-            LastCommitPos::NoCommits => {
-                let file_id = 1;
-                let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
-                let file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(&file_name);
-                let map = unsafe{MemoryMappedInt::new(&file_name, align(commit_file_size, HEADER_SIZE_BYTES as usize)).unwrap()};
-                let term = Rc::new(Cell::new(TermFile::new(map, 1, file_id)));
-                RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
-                        term.clone(),
-                        term.clone(),
-                        max_message.clone(),
-                        file_storage_directory.clone(),
-                        file_prefix.clone(),
-                        commit_file_size
-                ))
-            },
-            LastCommitPos::LastCommit{
-                start_term_id,
-                term_id,
-                file_id,
-                max_message_id,
-                path
-            } => {
-                let file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(false)
-                    .open(&path).unwrap();
-                let map = unsafe{MemoryMappedInt::open(file).unwrap()};
-                max_message.store(max_message_id, atomic::Ordering::Relaxed);
-                // Get the current term we need to find.
-                let term = Rc::new(Cell::new(TermFile::new(map, start_term_id, file_id)));
-                RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
-                        term.clone(),
-                        term.clone(),
-                        max_message.clone(),
-                        file_storage_directory.clone(),
-                        file_prefix.clone(),
-                        commit_file_size
-                ))
-            }
-        };
-        let (incoming_reader, incoming_writer) = create_many_to_one(incoming_buffer_size);
-        let (queue_writer, queue_reader) = MpscQueueWrap::new(*incoming_queue_size);
-        PersistedMessageFile {
+            file_prefix.clone(),
             max_file_size,
-            current_state: Arc::new(commit),
-            primary_reader: Arc::new(reader),
-            commit_join: None,
-            writer_join: None,
-            reader_join: None,
-            stop: Arc::new(AtomicU8::new(0)),
-            incoming_reader: Arc::new(incoming_reader),
-            incoming_writer,
-            incoming_queue_reader: Arc::new(queue_reader),
-            incoming_queue_writer: queue_writer,
-            max_message_id: max_message,
-            file_storage_directory: file_storage_directory.clone(),
-            file_prefix: file_prefix.clone(),
-            write_start_file_id: writer
-        }
+            max_message.clone()).unwrap();
+        1
+    };
+    // Since we don't have snapshots we have to start form the beginning.
+    let reader = PersistedMessageReadStream::new(
+        1,
+        0,
+        max_message.clone(),
+        message_processor,
+        file_storage_directory.clone(),
+        file_prefix.clone()).unwrap();
+    let (incoming_reader, incoming_writer) = create_many_to_one(incoming_buffer_size);
+    let (queue_writer, queue_reader) = MpscQueueWrap::new(*incoming_queue_size);
+    let (commit_writer, commit_reader) = SpscQueueSendWrap::new(*incoming_queue_size);
+    let stop = Arc::new(AtomicU8::new(0));
+    let writer_join = Some(write_thread_single(
+            stop.clone(),
+            queue_reader,
+            incoming_reader,
+            max_message.clone(),
+            max_file_size,
+            file_storage_directory.clone(),
+            file_prefix.clone(),
+            writer,
+            commit_writer));
+    let commit_join = Some(commit_thread_single(
+            stop.clone(),
+            file_storage_directory.clone(),
+            file_prefix.clone(),
+            commit_file_size,
+            max_message.clone(),
+            collection.clone(),
+            commit_reader
+    ));
+    PersistedMessageFile {
+        max_file_size,
+        commit_join,
+        writer_join,
+        reader_join: None,
+        stop,
+        incoming_writer,
+        incoming_queue_writer: queue_writer,
+        max_message_id: max_message,
+        file_storage_directory: file_storage_directory.clone(),
+        file_prefix: file_prefix.clone(),
     }
+}
 
-    /// Used to startup the threads for processing the requests.
-    pub fn start(&mut self) {
-        match self.reader_join {
-            None => {
-                self.writer_join = Some(write_thread_single(
-                    self.stop.clone(),
-                    self.incoming_queue_reader.clone(),
-                    self.incoming_reader.clone(),
-                    self.max_message_id.clone(),
-                    self.max_file_size,
-                    self.file_storage_directory.clone(),
-                    self.file_prefix.clone(),
-                    self.write_start_file_id
-                ));
-            },
-            Some(_) => {
-
-            }
-        }
-    }
+impl PersistedMessageFile
+{
 
     /// Tells the processes to stop.
     pub fn stop(&mut self) {
@@ -1856,7 +1906,7 @@ impl<FRead> PersistedMessageFile<FRead>
             msg_type_id,
             bytes) {
             Some(p) => {
-                let add_message = AddMessageRs::new(p, complete_on);
+                let add_message = AddMessageWriteRs::new(p, complete_on);
                 if !self.incoming_queue_writer.offer(add_message) {
                     thread::sleep_ms(2);
                 }
@@ -1880,7 +1930,7 @@ mod tests {
     use std::path::Path;
     use a19_concurrent::buffer::ring_buffer::create_many_to_one;
     use crate::file::{ MessageFileStore, MessageRead };
-    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult, MessageProcessor};
+    use crate::raft::{PersistedMessageFile, FileCollection, load_current_files, process_files, read_file_id, PersistedMessageWriteStream, PersistedMessageReadStream, find_end_of_buffer, create_event_name, FindEmptySlotResult, MessageProcessor, startup_single_node};
 
     const TEST_DIR:&str = "/home/mrh0057/cargo/tests/a19_data_persist";
     const TEST_PREFIX: &str = "test_persist";
@@ -1935,8 +1985,9 @@ mod tests {
         writer.flush().unwrap();
         let reader = unsafe{MessageFileStore::open_readonly(&create_event_name(&file_storage_directory, TEST_PREFIX, &1)).unwrap()};
         match find_end_of_buffer(&reader).unwrap() {
-            FindEmptySlotResult::Pos(x) => {
+            FindEmptySlotResult::Pos(x, last_msg_id) => {
                 assert_eq!(x, 32);
+                assert_eq!(last_msg_id, 1);
             },
             _ => {
                 panic!("Did not find the position.");
@@ -1964,7 +2015,7 @@ mod tests {
             remove_dir_all(&file_storage_directory).unwrap();
         }
         let processor = MessageProcessorInt::new();
-        let mut single_node = PersistedMessageFile::new_single_node(
+        let mut single_node = startup_single_node(
             file_storage_directory,
             TEST_PREFIX.to_owned(),
             5000,
@@ -1973,7 +2024,6 @@ mod tests {
             &0x40,
             &0x40
         );
-        single_node.start();
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
         let r = single_node.write(1, &bytes[0..8]).unwrap();
         r.wait();
