@@ -431,10 +431,10 @@ enum RaftNodeEvent {
     HigherTerm = 4,
 }
 
-pub trait MessageProcessor {
+pub trait MessageProcessor: Send {
     /// Handles an incoming message.
     /// `read` - The message that has been read in.
-    fn handle<'a>(&mut self, read: MessageRead<'a>);
+    fn handle<'a>(&mut self, read: &MessageRead<'a>);
 }
 
 struct MessageWriter {
@@ -670,7 +670,7 @@ impl<FRead> PersistedMessageReadStream<FRead>
             Ok(msg) => {
                 if msg.messageId() <= self.max_message_id.load(atomic::Ordering::Relaxed) {
                     self.current_pos = msg.next_pos();
-                    self.message_processor.handle(msg);
+                    self.message_processor.handle(&msg);
                     Ok(true)
                 } else if msg.messageId() == std::u64::MAX {
                     self.switch_to_next_buffer()?;
@@ -1811,6 +1811,7 @@ fn write_thread_single(
 }
 
 /// Starts the commit thread.
+/// # Arguments
 /// `stop` - Indicates the stop the thread.
 /// `file_storage_directory` - The file storage location.
 /// `file_prefix` - The file prefix.
@@ -1818,6 +1819,8 @@ fn write_thread_single(
 /// `max_message` - The current maximum message that has been committed.
 /// `collection` - The collection of the files.
 /// `pending_commit_queue` - The current pending commit queue.
+/// # Returns
+/// The join handler to indicate when the thread has stopped.
 fn commit_thread_single(
     stop: Arc<AtomicU8>,
     file_storage_directory: String,
@@ -1825,7 +1828,6 @@ fn commit_thread_single(
     commit_file_size: usize,
     max_message: Arc<AtomicU64>,
     collection: Arc<FileCollection>,
-    pending_commit_queue: SpscQueueReceiveWrap<AddMessageCommit>
 ) -> JoinHandle<u32> {
     thread::spawn(move||{
         let ( commit_term, max_commit_term ) = match find_last_commit_pos(&collection.commit_files) {
@@ -1955,28 +1957,6 @@ fn commit_thread_single(
                                         term_file.buffer.save_term(
                                             &p,
                                             &term);
-                                        loop {
-                                            match pending_commit_queue.peek() {
-                                                Some(v) => {
-                                                    if v.is_processed(
-                                                        &result.next_pos,
-                                                        &read_file_id
-                                                    ) {
-                                                        match pending_commit_queue.poll() {
-                                                            Some(a) => {
-                                                                a.complete.send(());
-                                                            },
-                                                            None => {
-                                                                panic!("Should have gotten a value since peek worked");
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                None => {
-                                                    break
-                                                }
-                                            }
-                                        }
                                         read_pos = result.next_pos;
                                     },
                                     TermPosResult::Overflow => {
@@ -2053,6 +2033,123 @@ fn commit_thread_single(
     })
 }
 
+/// Starts the process thread.  Currently doesn't support a snapshot.
+/// # Arguments
+/// `file_storage_directory` - The file storage directory.
+/// `file_prefix` - The file prefix to store.
+/// `file_collection` - The file collection.
+/// `message_processor` - The message processor to call.
+/// `max_message_id` - The maximum message we should process.
+/// # Returns
+/// The join handler for when the thread quits.
+fn read_thread<FRead>(
+    stop: Arc<AtomicU8>,
+    file_storage_directory: String,
+    file_prefix: String,
+    file_collection: Arc<FileCollection>,
+    message_processor: FRead,
+    max_message_id: Arc<AtomicU64>,
+    pending_commit_queue: SpscQueueReceiveWrap<AddMessageCommit>) -> JoinHandle<u32> 
+    where FRead:MessageProcessor + 'static
+{
+    thread::spawn(move||{
+        let mut message_processor = message_processor;
+        let mut read_file_id = 1;
+        let mut read_file_path = create_event_name(
+            &file_storage_directory,
+            &file_prefix,
+            &read_file_id);
+        let mut read = unsafe{MessageFileStore::open_readonly(&read_file_path).unwrap()};
+        let mut read_pos = 0;
+        loop {
+            if stop.load(atomic::Ordering::Relaxed) > 0 {
+                break 0
+            } else {
+                match read.read_new(&read_pos) {
+                    Ok(result) => {
+                        if result.msgTypeId() > 0 {
+                            if result.messageId() <= max_message_id.load(atomic::Ordering::Relaxed) {
+                                message_processor.handle(&result);
+                                loop {
+                                    let top = pending_commit_queue.peek();
+                                    match top {
+                                        Some(t) => {
+                                            if t.is_processed(&read_pos, &read_file_id) {
+                                                match pending_commit_queue.poll() {
+                                                    Some(f) => {
+                                                        f.complete.send(());
+                                                    },
+                                                    None => {
+                                                        panic!("Something took the value from the peek.");
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        None => {
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            read_pos = result.next_pos();
+                        }
+                    },
+                    Err(e) => {
+                        match e {
+                            file::Error::NoMessage => {
+                                thread::sleep_ms(1);
+                            },
+                            file::Error::Full => {
+                                // TODO go to next file
+                                let next_file_id = read_file_id + 1;
+                                let next_path = create_event_name(
+                                    &file_storage_directory,
+                                    &file_prefix,
+                                    &next_file_id);
+                                match unsafe{MessageFileStore::open_readonly(&next_path)} {
+                                    Ok(store) => {
+                                        read = store;
+                                        read_file_id = next_file_id;
+                                        read_pos = 0;
+                                    },
+                                    Err(e) => {
+                                        thread::sleep_ms(10);
+                                    }
+                                }
+                            },
+                            file::Error::NotEnoughSpace{position, capacity, remaining, message_size} => {
+                                panic!("We are reading in a message this should never happen!");
+                            },
+                            file::Error::PositionOutOfRange(p) => {
+                                // TODO go to next file
+                                let next_file_id = read_file_id + 1;
+                                let next_path = create_event_name(
+                                    &file_storage_directory,
+                                    &file_prefix,
+                                    &next_file_id);
+                                match unsafe{MessageFileStore::open_readonly(&next_path)} {
+                                    Ok(store) => {
+                                        read = store;
+                                        read_file_id = next_file_id;
+                                        read_pos = 0;
+                                    },
+                                    Err(e) => {
+                                        thread::sleep_ms(10);
+                                    }
+                                }
+                            },
+                            file::Error::FileError(e) => {
+                                thread::sleep_ms(2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 pub fn startup_single_node<FRead>(
     file_storage_directory: String,
     file_prefix: String,
@@ -2061,7 +2158,7 @@ pub fn startup_single_node<FRead>(
     message_processor: FRead,
     incoming_buffer_size: &usize,
     incoming_queue_size: &usize) -> PersistedMessageFile
-where FRead: MessageProcessor {
+where FRead: MessageProcessor + 'static {
     let store_path = Path::new(&file_storage_directory);
     if !store_path.exists() {
         create_dir_all(&file_storage_directory).unwrap();
@@ -2081,14 +2178,6 @@ where FRead: MessageProcessor {
             max_message.clone()).unwrap();
         1
     };
-    // Since we don't have snapshots we have to start form the beginning.
-    let reader = PersistedMessageReadStream::new(
-        1,
-        0,
-        max_message.clone(),
-        message_processor,
-        file_storage_directory.clone(),
-        file_prefix.clone()).unwrap();
     let (incoming_reader, incoming_writer) = create_many_to_one(incoming_buffer_size);
     let (queue_writer, queue_reader) = MpscQueueWrap::new(*incoming_queue_size);
     let (commit_writer, commit_reader) = SpscQueueSendWrap::new(*incoming_queue_size);
@@ -2109,14 +2198,22 @@ where FRead: MessageProcessor {
             file_prefix.clone(),
             commit_file_size,
             max_message.clone(),
+            collection.clone()
+    ));
+    let reader_join = Some(read_thread(
+            stop.clone(),
+            file_storage_directory.clone(),
+            file_prefix.clone(),
             collection.clone(),
+            message_processor,
+            max_message.clone(),
             commit_reader
     ));
     PersistedMessageFile {
         max_file_size,
         commit_join,
         writer_join,
-        reader_join: None,
+        reader_join,
         stop,
         incoming_writer,
         incoming_queue_writer: queue_writer,
@@ -2257,7 +2354,7 @@ mod tests {
         if path.exists() && path.is_dir() {
             remove_dir_all(&file_storage_directory).unwrap();
         }
-        let processor = MessageProcessorInt::new();
+        let mut processor = MessageProcessorInt::new();
         let mut single_node = startup_single_node(
             file_storage_directory,
             TEST_PREFIX.to_owned(),
@@ -2287,10 +2384,13 @@ mod tests {
         }
     }
 
+    unsafe impl Send for MessageProcessorInt {}
+
     impl MessageProcessor for MessageProcessorInt {
-        fn handle<'a>(&mut self, read: MessageRead<'a>) {
+        fn handle<'a>(&mut self, read: &MessageRead<'a>) {
             self.ran = true;
             self.last_message_id = read.messageId();
         }
     }
+
 }

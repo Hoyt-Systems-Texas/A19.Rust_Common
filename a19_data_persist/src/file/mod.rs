@@ -35,9 +35,9 @@ impl MessageFileStoreRead {
         }
     }
 
-    pub fn read_new(
+    pub fn read_new<'a>(
         &self,
-        pos: &usize) -> Result<MessageRead> {
+        pos: &usize) -> Result<MessageRead<'a>> {
         unsafe {
             let store = &mut *self.store.get();
             store.read_new(pos)
