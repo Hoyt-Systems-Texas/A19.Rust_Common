@@ -44,6 +44,7 @@ use std::path::{Path, MAIN_SEPARATOR, PathBuf};
 use std::vec::Vec;
 use std::rc::Rc;
 use std::cell::Cell;
+use std::time::{SystemTime, UNIX_EPOCH};
 use futures::{Future, Poll, Async, oneshot, Oneshot, Canceled, Complete};
 
 #[path="../target/a19_data_persist/message/persisted_file_generated.rs"]
@@ -173,7 +174,7 @@ trait CommitFile {
     fn max_message_id(&self, pos: &usize) -> u64;
     fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self;
     fn length_of_commit(&self, pos: &usize) -> u32;
-    fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self;
+    fn save_term(&mut self, pos: &usize, term: &TermCommit) -> &mut Self;
     fn set_votes(&mut self, pos: &usize, votes: u16) -> &mut Self;
     fn inc_votes(&mut self, pos: &usize) -> u16;
     fn get_votes(&mut self, pos: &usize) -> u16;
@@ -360,7 +361,7 @@ impl CommitFile for MemoryMappedInt {
     }
 
     #[inline]
-    fn save_term(&mut self, pos: &usize, term: TermCommit) -> &mut Self {
+    fn save_term(&mut self, pos: &usize, term: &TermCommit) -> &mut Self {
         self.set_term(pos, &term.term_id)
             .set_version(pos, &term.version)
             .set_msg_type(pos, &term.type_id)
@@ -373,13 +374,16 @@ impl CommitFile for MemoryMappedInt {
             .set_max_message_id(pos, &term.file_max_message_id)
             .set_length_of_commit(pos, &term.length)
             ;
+        if term.committed > 0 {
+            self.set_committed(pos);
+        }
         self
     }
 
 }
 
 /// A term committed in the raft protocol.
-struct TermCommit<'a> {
+struct TermCommit {
     /// The raft term id.
     term_id: u64,
     /// The current version of the message.
@@ -404,8 +408,6 @@ struct TermCommit<'a> {
     file_max_message_id: u64,
     /// The length of the message commit.
     length: u32,
-    /// The buffer associated with this term.
-    buffer: &'a [u8]
 }
 
 /// The state of the raft node.
@@ -820,7 +822,7 @@ struct TermFile {
 
 enum TermPosResult {
     /// The position of the term.
-    Pos(u64),
+    Pos(usize),
     /// The term is to big.
     Overflow,
     /// The position is in a previous file.
@@ -860,7 +862,7 @@ impl TermFile {
             TermPosResult::Overflow
         } else {
             let offset = *term_id - self.term_start;
-            TermPosResult::Pos(offset * HEADER_SIZE_BYTES)
+            TermPosResult::Pos((offset * HEADER_SIZE_BYTES) as usize)
         }
     }
 }
@@ -879,9 +881,9 @@ pub struct PersistedCommitStreamLeader {
 
 pub struct PersistedCommitSingleNode {
     /// The current commit file.
-    commit_file: Rc<Cell<TermFile>>,
+    commit_file: Rc<TermFile>,
     /// The current file we are placing new terms to.
-    new_term_file: Rc<Cell<TermFile>>,
+    new_term_file: Rc<TermFile>,
     /// The maximum message id.
     max_message_id: Arc<AtomicU64>,
     /// The file storage directory.
@@ -897,8 +899,8 @@ pub struct PersistedCommitSingleNode {
 impl PersistedCommitSingleNode {
 
     fn new(
-        commit_file: Rc<Cell<TermFile>>,
-        new_term_file: Rc<Cell<TermFile>>,
+        commit_file: Rc<TermFile>,
+        new_term_file: Rc<TermFile>,
         max_message_id: Arc<AtomicU64>,
         file_storage_directory: String,
         file_prefix: String,
@@ -1671,6 +1673,66 @@ fn find_last_commit_pos(
     }
 }
 
+enum LastTermPos {
+    NoTerms,
+    Pos{
+        term_start: u64,
+        last_term: u64,
+        file_id: u32}
+}
+
+/// Used to find the last term in the file.
+/// `commit_files` - The commit files to scan.
+fn find_last_term(
+    commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastTermPos {
+    let commit_files = commit_files.lock().unwrap();
+    let length = commit_files.len();
+    if length == 0 {
+        LastTermPos::NoTerms
+    } else {
+        let mut file_pos = length - 1;
+        loop {
+            let file_commit: &CommitFileInfo = commit_files.get(file_pos).unwrap();
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(false)
+                .open(&file_commit.path).unwrap();
+            let buffer = unsafe {MemoryMappedInt::open(file).unwrap()};
+            let mut pos = 0;
+            let mut last_term = 0;
+            let mut found_commit = false;
+            let start_term_id = file_commit.term_start;
+            loop {
+                let term = buffer.term(&pos);
+                if term == 0 {
+                    break
+                } else {
+                    if buffer.term(&pos) > 0 {
+                        last_term = term;
+                        found_commit = true;
+                        pos += HEADER_SIZE_BYTES as usize;
+                    } else {
+                        break
+                    }
+                }
+            }
+            if found_commit {
+                break LastTermPos::Pos{
+                    term_start: start_term_id,
+                    last_term,
+                    file_id: file_commit.file_id}
+            } else {
+                if file_pos == 0 {
+                    break LastTermPos::NoTerms
+                } else {
+                    file_pos -= 1;
+                }
+            }
+        }
+    }
+}
+
 /// Starts the write thread.
 /// # Arguments
 /// `stop` - We should stop processing.
@@ -1748,6 +1810,14 @@ fn write_thread_single(
     })
 }
 
+/// Starts the commit thread.
+/// `stop` - Indicates the stop the thread.
+/// `file_storage_directory` - The file storage location.
+/// `file_prefix` - The file prefix.
+/// `commit_file_size` - The size of the commit file size.
+/// `max_message` - The current maximum message that has been committed.
+/// `collection` - The collection of the files.
+/// `pending_commit_queue` - The current pending commit queue.
 fn commit_thread_single(
     stop: Arc<AtomicU8>,
     file_storage_directory: String,
@@ -1757,56 +1827,229 @@ fn commit_thread_single(
     collection: Arc<FileCollection>,
     pending_commit_queue: SpscQueueReceiveWrap<AddMessageCommit>
 ) -> JoinHandle<u32> {
-    let commit = match find_last_commit_pos(&collection.commit_files) {
-        LastCommitPos::NoCommits => {
-            let file_id = 1;
-            let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&file_name);
-            let map = unsafe{MemoryMappedInt::new(&file_name, align(commit_file_size, HEADER_SIZE_BYTES as usize)).unwrap()};
-            let term = Rc::new(Cell::new(TermFile::new(map, 1, file_id)));
-            RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
-                    term.clone(),
-                    term.clone(),
-                    max_message.clone(),
-                    file_storage_directory.clone(),
-                    file_prefix.clone(),
-                    commit_file_size,
-                    1
-            ))
-        },
-        LastCommitPos::LastCommit{
-            start_term_id,
-            term_id,
-            file_id,
-            max_message_id,
-            path
-        } => {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(false)
-                .open(&path).unwrap();
-            let map = unsafe{MemoryMappedInt::open(file).unwrap()};
-            max_message.store(max_message_id, atomic::Ordering::Relaxed);
-            // Get the current term we need to find.
-            let term = Rc::new(Cell::new(TermFile::new(map, start_term_id, file_id)));
-            RaftNodeState::SingleNode(PersistedCommitSingleNode::new(
-                    term.clone(),
-                    term.clone(),
-                    max_message.clone(),
-                    file_storage_directory.clone(),
-                    file_prefix.clone(),
-                    commit_file_size,
-                    term_id
-            ))
-        }
-    };
     thread::spawn(move||{
-        0
+        let ( commit_term, max_commit_term ) = match find_last_commit_pos(&collection.commit_files) {
+            LastCommitPos::NoCommits => {
+                let file_id = 1;
+                let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&file_name);
+                let map = unsafe{MemoryMappedInt::new(&file_name, align(commit_file_size, HEADER_SIZE_BYTES as usize)).unwrap()};
+                let term = TermFile::new(map, 1, file_id);
+                (term, 0)
+            },
+            LastCommitPos::LastCommit{
+                start_term_id,
+                term_id,
+                file_id,
+                max_message_id,
+                path
+            } => {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(false)
+                    .open(&path).unwrap();
+                let map = unsafe{MemoryMappedInt::open(file).unwrap()};
+                max_message.store(max_message_id, atomic::Ordering::Relaxed);
+                // Get the current term we need to find.
+                let term = TermFile::new(map, start_term_id, file_id);
+                (term, term_id)
+            }
+        };
+        let ( new_term, last_term ) = match find_last_term(&collection.commit_files) {
+            LastTermPos::Pos{
+                file_id,
+                last_term,
+                term_start} => {
+                    let path = create_commit_name(
+                        &file_storage_directory,
+                        &file_prefix,
+                        &file_id);
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(false)
+                        .open(&path).unwrap();
+                    let map = unsafe{MemoryMappedInt::open(file).unwrap()};
+                    (TermFile::new(map, term_start, file_id), last_term)
+                },
+                LastTermPos::NoTerms => {
+                    let path = create_commit_name(
+                        &file_storage_directory,
+                        &file_prefix,
+                        &1
+                    );
+                    let map = unsafe{MemoryMappedInt::new(&path, commit_file_size).unwrap()};
+                    (TermFile::new(map, 1, 1), 0)
+                }
+        };
+        if last_term != max_commit_term
+            || new_term.file_id != commit_term.file_id {
+                panic!("Terms must match.  This node must have run in cluster node.")
+            } else {
+                let mut write_pos = 0;
+                let mut current_term = max_commit_term;
+                let ( message_file, read_pos, read_file_id ) = if current_term == 0 {
+                    // New file so we don't need to do much.
+                    let path = create_event_name(
+                        &file_storage_directory,
+                        &file_prefix,
+                        &1);
+                    ( unsafe {MessageFileStore::open_readonly(&path).unwrap()}, 0, 1 )
+                } else {
+                    let term_pos = 
+                        match commit_term.calculate_pos(&max_commit_term) {
+                            TermPosResult::Pos(pos) => {
+                                pos
+                            },
+                            _ => {
+                                panic!("Bug in finding the position to read in.");
+                            }
+                        };
+                    let msg_file_id = commit_term.buffer.file_id(&term_pos);
+                    let position = commit_term.buffer.file_position_offset(&term_pos) as usize
+                        + commit_term.buffer.length_of_commit(&term_pos) as usize;
+                    let path = create_event_name(
+                        &file_storage_directory,
+                        &file_prefix,
+                        &msg_file_id);
+                    (unsafe {MessageFileStore::open_readonly(&path).unwrap()}, position, msg_file_id)
+                };
+                let mut message_file = message_file;
+                let mut read_pos = read_pos;
+                let mut read_file_id = read_file_id;
+                let mut term_file = commit_term;
+                let mut current_term = max_commit_term;
+                loop {
+                    if stop.load(atomic::Ordering::Acquire) > 0 {
+                        break 0
+                    } else {
+                        match message_file.read_block(
+                            &read_pos,
+                            &max_message.load(atomic::Ordering::Relaxed),
+                            &0x10000) {
+                            Ok(result) => {
+                                let new_term = current_term + 1;
+                                let current_time = SystemTime::now();
+                                let since_epoch = current_time.duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                                let term = TermCommit {
+                                    file_position_offset: read_pos as u64,
+                                    file_id: read_file_id,
+                                    term_id: new_term,
+                                    length: result.bytes.len() as u32,
+                                    version: 1,
+                                    type_id: 1,
+                                    leader_id: 1,
+                                    server_id: 1,
+                                    committed: 1,
+                                    file_max_message_id: result.message_id_end,
+                                    timestamp: since_epoch,
+                                    committed_timestamp: since_epoch
+                                };
+                                match term_file.calculate_pos(&new_term) {                                    
+                                    TermPosResult::Pos(p) => {
+                                        term_file.buffer.save_term(
+                                            &p,
+                                            &term);
+                                        loop {
+                                            match pending_commit_queue.peek() {
+                                                Some(v) => {
+                                                    if v.is_processed(
+                                                        &result.next_pos,
+                                                        &read_file_id
+                                                    ) {
+                                                        match pending_commit_queue.poll() {
+                                                            Some(a) => {
+                                                                a.complete.send(());
+                                                            },
+                                                            None => {
+                                                                panic!("Should have gotten a value since peek worked");
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                None => {
+                                                    break
+                                                }
+                                            }
+                                        }
+                                        read_pos = result.next_pos;
+                                    },
+                                    TermPosResult::Overflow => {
+                                        let next_file_id = term_file.file_id + 1;
+                                        let path = create_commit_name(
+                                            &file_storage_directory,
+                                            &file_prefix,
+                                            &next_file_id);
+                                        let buffer = unsafe{MemoryMappedInt::new(&path, commit_file_size).unwrap()};
+                                        term_file = TermFile::new(
+                                            buffer,
+                                            new_term,
+                                            next_file_id);
+                                    },
+                                    TermPosResult::Underflow => {
+                                        panic!("We should never underflow when writing new terms!");
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                match e {
+                                    file::Error::Full => {
+                                        // Next file
+                                        let next_file = read_file_id + 1;
+                                        let file_path = create_event_name(
+                                            &file_storage_directory,
+                                            &file_prefix,
+                                            &next_file
+                                        );
+                                        match unsafe{MessageFileStore::open_readonly(&file_path)} {
+                                            Ok(buffer) => {
+                                                message_file = buffer;
+                                            },
+                                            Err(e) => {
+                                                // Spin
+                                                thread::sleep_ms(10);
+                                            }
+                                        }
+                                    },
+                                    file::Error::FileError(e) => {
+                                        // Spin
+                                        thread::sleep_ms(100);
+                                    },
+                                    file::Error::NoMessage => {
+                                        thread::sleep_ms(2);
+                                    },
+                                    file::Error::PositionOutOfRange(pos) => {
+                                        // Next file
+                                        let next_file = read_file_id + 1;
+                                        let file_path = create_event_name(
+                                            &file_storage_directory,
+                                            &file_prefix,
+                                            &next_file
+                                        );
+                                        match unsafe{MessageFileStore::open_readonly(&file_path)} {
+                                            Ok(buffer) => {
+                                                message_file = buffer;
+                                            },
+                                            Err(e) => {
+                                                // Spin
+                                                thread::sleep_ms(10);
+                                            }
+                                        }
+                                    },
+                                    file::Error::NotEnoughSpace{position, capacity, remaining, message_size} => {
+                                        panic!("We are reading in a message this should never happen!");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+        }
     })
 }
 

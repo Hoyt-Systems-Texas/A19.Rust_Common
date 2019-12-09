@@ -44,7 +44,7 @@ impl MessageFileStoreRead {
         }
     }
 
-    fn read_block<'a>(
+    pub fn read_block<'a>(
         &'a self,
         pos: &usize,
         max_message_id: &u64,

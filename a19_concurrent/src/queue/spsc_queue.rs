@@ -36,10 +36,6 @@ impl<T> SpscQueueSendWrap<T> {
         }
     }
 
-    fn peek<'a>(&'a self) -> Option<&'a T> {
-        let queue = unsafe {&mut *self.queue.get()};
-        queue.peek()
-    }
 }
 
 pub struct SpscQueueReceiveWrap<T> {
@@ -62,6 +58,11 @@ impl<T> SpscQueueReceiveWrap<T> {
             let queue = &mut *self.queue.get();
             queue.drain(act, limit)
         }
+    }
+
+    pub fn peek<'a>(&'a self) -> Option<&'a T> {
+        let queue = unsafe {&mut *self.queue.get()};
+        queue.peek()
     }
 }
 
