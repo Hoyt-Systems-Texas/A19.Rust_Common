@@ -1,5 +1,5 @@
-mod raft;
-mod file;
+pub mod raft;
+pub mod file;
 
 use futures::{Oneshot, Future, Canceled, Poll};
 

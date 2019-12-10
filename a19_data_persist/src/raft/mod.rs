@@ -546,7 +546,7 @@ impl PersistedMessageWriteStream {
             buffer
         ) {
             Ok(s) => {
-                self.current_pos += s;
+                self.current_pos = s;
                 self.max_message_id.store(*msg_id, atomic::Ordering::Release);
                 Ok((s, self.file_id))
             },
@@ -945,19 +945,19 @@ struct FileStorageInfo {
 
 struct AddMessageWriteRs {
     position_start: usize,
-    complete: Complete<()>
+    complete: Complete<file::Result<()>>
 }
 
 struct AddMessageCommit {
     file_pos: usize,
     file_id: u32,
-    complete: Complete<()>
+    complete: Complete<file::Result<()>>
 }
 
 impl AddMessageWriteRs {
     fn new(
         position_start: usize,
-        complete: Complete<()>
+        complete: Complete<file::Result<()>>
     ) -> Self {
         AddMessageWriteRs {
             position_start,
@@ -973,7 +973,7 @@ impl AddMessageCommit {
     fn new(
         file_pos: usize,
         file_id: u32,
-        complete: Complete<()>
+        complete: Complete<file::Result<()>>
     ) -> Self {
         AddMessageCommit {
             file_pos,
@@ -1012,8 +1012,11 @@ pub struct PersistedMessageFile
     incoming_writer: ManyToOneBufferWriter,
     /// The incoming reader queue that contains the messages to complete.
     incoming_queue_writer: MpscQueueWrap<AddMessageWriteRs>,
+    /// The current maximum message id that has been processed.
     max_message_id: Arc<AtomicU64>,
+    /// The directory to store the files.
     file_storage_directory: String,
+    /// The prefix for the fille storage.
     file_prefix: String,
 }
 
@@ -1932,7 +1935,7 @@ fn commit_thread_single(
                     } else {
                         match message_file.read_block(
                             &read_pos,
-                            &max_message.load(atomic::Ordering::Relaxed),
+                            &std::u64::MAX,
                             &0x10000) {
                             Ok(result) => {
                                 let new_term = current_term + 1;
@@ -1957,7 +1960,9 @@ fn commit_thread_single(
                                         term_file.buffer.save_term(
                                             &p,
                                             &term);
+                                        max_message.store(result.message_id_end, atomic::Ordering::Relaxed);
                                         read_pos = result.next_pos;
+                                        current_term = new_term;
                                     },
                                     TermPosResult::Overflow => {
                                         let next_file_id = term_file.file_id + 1;
@@ -1970,6 +1975,7 @@ fn commit_thread_single(
                                             buffer,
                                             new_term,
                                             next_file_id);
+                                        read_file_id = next_file_id;
                                     },
                                     TermPosResult::Underflow => {
                                         panic!("We should never underflow when writing new terms!");
@@ -2077,7 +2083,7 @@ fn read_thread<FRead>(
                                             if t.is_processed(&read_pos, &read_file_id) {
                                                 match pending_commit_queue.poll() {
                                                     Some(f) => {
-                                                        f.complete.send(());
+                                                        f.complete.send(Ok(()));
                                                     },
                                                     None => {
                                                         panic!("Something took the value from the peek.");
@@ -2240,7 +2246,7 @@ impl PersistedMessageFile
     /// `bytes` - The bytes to write the buffer.
     /// # Returns
     /// The future that gets completed.
-    pub fn write(&mut self, msg_type_id: i32, bytes: &[u8]) -> Option<QueueFuture<()>> {
+    pub fn write(&self, msg_type_id: i32, bytes: &[u8]) -> QueueFuture<file::Result<()>> {
         let (queue_future, complete_on) = QueueFuture::new();
         match self.incoming_writer.write(
             msg_type_id,
@@ -2250,10 +2256,11 @@ impl PersistedMessageFile
                 if !self.incoming_queue_writer.offer(add_message) {
                     thread::sleep_ms(2);
                 }
-                Some(queue_future)
+                queue_future
             },
             None => {
-                None
+                complete_on.send(Err(file::Error::Full));
+                queue_future
             }
         }
     }
@@ -2365,8 +2372,8 @@ mod tests {
             &0x40
         );
         let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
-        let r = single_node.write(1, &bytes[0..8]).unwrap();
-        r.wait();
+        let r = single_node.write(1, &bytes[0..8]).wait();
+        r.unwrap();
         single_node.stop();
     }
 
