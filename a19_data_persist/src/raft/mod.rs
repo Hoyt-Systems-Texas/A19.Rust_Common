@@ -1807,6 +1807,8 @@ fn write_thread_single(
                             }
                         }
                     }
+                } else {
+                    thread::sleep_ms(1);
                 }
             }
         }
@@ -2096,7 +2098,7 @@ fn read_thread<FRead>(
                                         }
                                     }
                                 }
-                            }
+                            } 
                         } else {
                             read_pos = result.next_pos();
                         }
