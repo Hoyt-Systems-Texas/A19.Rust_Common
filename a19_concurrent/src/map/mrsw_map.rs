@@ -63,6 +63,13 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapReader<K, V
             map.get(key, act)
         }
     }
+
+    pub fn get_all<F, R>(&self, act: F) -> R 
+        where F: FnOnce(&HashMap<K, V>) -> R
+    {
+        let map = unsafe {&mut *self.map.get()};
+        map.get_all(act)
+    }
 }
 
 unsafe impl<K: Hash + Eq, V, E> Sync for MapContainer<K, V, E> { }
@@ -231,6 +238,15 @@ pub trait ReaderMap<K: Hash + Eq, V> {
     /// `key` - The key to get the value.
     /// `act` - The action to run with the value that returns the specified result.
     fn get<R>(&mut self, key: K, act: fn(Option<&V>) -> R) -> R;
+
+    /// Used to get all of the values from the mrswmap.
+    /// # Arguments
+    /// `act` - The action to run the collection against.  This gives you a immutable reference
+    /// since this collection is readonly.
+    /// # Returns
+    /// The value when you call act.
+    fn get_all<F, R>(&mut self, act: F) -> R 
+        where F: FnOnce(&HashMap<K, V>) -> R;
 }
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> for MrswMap<K, V, E, TApplyChange> {
 
@@ -239,7 +255,18 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> fo
         unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
         let elem = unsafe{(*reader).map.get(&key)};
         let r = act(elem);
-        unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
+        unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
+        r
+    }
+
+    fn get_all<F, R>(&mut self, act: F) -> R 
+        where F: FnOnce(&HashMap<K, V>) -> R
+    {
+        let reader = self.current_reader.load(Ordering::SeqCst);
+        unsafe{ (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
+        let map = unsafe{&(*reader).map};
+        let r = act(map);
+        unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
         r
     }
 }

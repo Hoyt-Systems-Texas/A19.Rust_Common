@@ -2099,6 +2099,7 @@ fn read_thread<FRead>(
                                     }
                                 }
                             } 
+                            read_pos = result.next_pos();
                         } else {
                             read_pos = result.next_pos();
                         }
