@@ -77,11 +77,11 @@ unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> { }
 
 /// The multi reader, single writer map.
 pub struct MrswMap<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
-    current_reader: AtomicPtr<MapContainer<K, V, E>>,
+    current_reader: AtomicPtr<Box<MapContainer<K, V, E>>>,
     /// The first map.
-    map1: MapContainer<K, V, E>,
+    map1: Box<MapContainer<K, V, E>>,
     /// The second map.
-    map2: MapContainer<K, V, E>,
+    map2: Box<MapContainer<K, V, E>>,
     /// The function that is used to apply the changes to the hashmap.
     apply_change: TApplyChange,
 }
@@ -97,19 +97,19 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
         apply_change: TApplyChange) -> (MrswMapReader<K, V, E, TApplyChange>, MrswMapWriter<K, V, E, TApplyChange>) {
-        let mut reader = MapContainer::new(
+        let mut reader = Box::new(MapContainer::new(
             map1,
             READER,
-            1_024);
-        let ptr = AtomicPtr::<MapContainer<K, V, E>>::new(&mut reader);
+            1_024));
+        let ptr = AtomicPtr::<Box<MapContainer<K, V, E>>>::new(&mut reader);
         let mrsp_map = Arc::new(UnsafeCell::new(MrswMap {
             current_reader: ptr,
             map1: reader,
-            map2: MapContainer::new(
+            map2: Box::new(MapContainer::new(
                 map2,
                 WRITER,
                 1_024
-            ),
+            )),
             apply_change
         }));
         (

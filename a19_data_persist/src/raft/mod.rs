@@ -2061,6 +2061,7 @@ fn read_thread<FRead>(
     where FRead:MessageProcessor + 'static
 {
     thread::spawn(move||{
+        println!("Starting up reading thread!");
         let mut message_processor = message_processor;
         let mut read_file_id = 1;
         let mut read_file_path = create_event_name(
@@ -2098,8 +2099,10 @@ fn read_thread<FRead>(
                                         }
                                     }
                                 }
+                                read_pos = result.next_pos();
+                            } else {
+                                thread::sleep_ms(1);
                             } 
-                            read_pos = result.next_pos();
                         } else {
                             read_pos = result.next_pos();
                         }
