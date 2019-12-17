@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicU32, Ordering, AtomicPtr};
 use std::thread;
 
 const READER: u32 = 1;
-const WRITER: u32 = 2;
+const WRITER_PENDING: u32 = 2;
+const WRITER: u32 = 3;
 
 /// Applies a change stream of events on the a map.
 pub trait ApplyChanges<K: Hash + Eq, V, E> {
@@ -184,30 +185,31 @@ pub trait WriterMap<K: Hash + Eq, V, E> {
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E> for MrswMap<K, V, E, TApplyChange> {
     /// Adds an event to the map to be processed.
     fn add_event(&mut self, event: E) {
-        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == WRITER {
-            (&mut self.map1, &mut self.map2)
-        } else {
+        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == READER {
             (&mut self.map2, &mut self.map1)
+        } else {
+            (&mut self.map1, &mut self.map2)
         };
         MrswMap::apply_int(&self.apply_change, writer, &event);
         MrswMap::<K, V, E, TApplyChange>::add_event_int(reader, event);
     }
 
     fn commit(&mut self) {
-        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == WRITER {
-            (&mut self.map1, &mut self.map2)
-        } else {
+        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == READER {
             (&mut self.map2, &mut self.map1)
+        } else {
+            (&mut self.map1, &mut self.map2)
         };
         // Full memory barrier hear so we don't accidently have a thread read the wrong writer
         // value.  Need to do this immediately so we 
         writer.state.store(READER, Ordering::Relaxed);
-        reader.state.store(WRITER, Ordering::Relaxed);
+        reader.state.store(WRITER_PENDING, Ordering::Relaxed);
         // Need to do an atomic store of the current writer.
-        self.current_reader.store(reader, Ordering::SeqCst);
+        self.current_reader.store(writer, Ordering::SeqCst);
         loop {
             // Wait for the reader count to go to zero.
             if reader.reader_count.load(Ordering::Relaxed) == 0 {
+                writer.state.store(WRITER, Ordering::Relaxed);
                 break
             } else {
                 thread::yield_now();
@@ -251,23 +253,39 @@ pub trait ReaderMap<K: Hash + Eq, V> {
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> for MrswMap<K, V, E, TApplyChange> {
 
     fn get<R>(&mut self, key: K, act: fn(Option<&V>) -> R) -> R {
-        let reader = self.current_reader.load(Ordering::SeqCst);
-        unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
-        let elem = unsafe{(*reader).map.get(&key)};
-        let r = act(elem);
-        unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
-        r
+        loop {
+            let reader = self.current_reader.load(Ordering::Relaxed);
+            unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
+            // Need to verify it's still the reader before moving on.  Needs to be a LoadStore
+            // barrier.
+            if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
+                let elem = unsafe{(*reader).map.get(&key)};
+                let r = act(elem);
+                break r
+            } else {
+                thread::yield_now();
+            }
+            unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
+        }
     }
 
     fn get_all<F, R>(&mut self, act: F) -> R 
         where F: FnOnce(&HashMap<K, V>) -> R
     {
-        let reader = self.current_reader.load(Ordering::SeqCst);
-        unsafe{ (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
-        let map = unsafe{&(*reader).map};
-        let r = act(map);
-        unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
-        r
+        loop {
+            let reader = self.current_reader.load(Ordering::Relaxed);
+            unsafe{ (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
+            // Need to verify it's still the reader before moving on.  Needs to be a load store
+            // barrier.
+            if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
+                let map = unsafe{&(*reader).map};
+                let r = act(map);
+                break r
+            } else {
+                thread::yield_now();
+            }
+            unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
+        }
     }
 }
 unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMap<K, V, E, TApplyChange> { }

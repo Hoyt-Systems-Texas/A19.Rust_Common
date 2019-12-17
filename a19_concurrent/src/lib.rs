@@ -1,4 +1,3 @@
-#[macro_use]
 extern crate time_test;
 
 use std::sync::atomic::AtomicU64;
@@ -6,6 +5,7 @@ use std::sync::atomic::AtomicU64;
 pub mod queue;
 pub mod buffer;
 pub mod map;
+pub mod event;
 
 pub struct PaddedU64 {
     // Make sure we are on one cache line.
