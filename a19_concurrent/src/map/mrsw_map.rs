@@ -113,6 +113,8 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
             )),
             apply_change
         }));
+        let v = unsafe {&mut *mrsp_map.get()};
+        v.current_reader.store(&mut v.map1, Ordering::Relaxed);
         (
             MrswMapReader {
                 map: mrsp_map.clone(),
