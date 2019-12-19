@@ -205,11 +205,11 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
         writer.state.store(READER, Ordering::Relaxed);
         reader.state.store(WRITER_PENDING, Ordering::Relaxed);
         // Need to do an atomic store of the current writer.
-        self.current_reader.store(writer, Ordering::SeqCst);
+        self.current_reader.store(writer, Ordering::Relaxed);
         loop {
             // Wait for the reader count to go to zero.
             if reader.reader_count.load(Ordering::Relaxed) == 0 {
-                writer.state.store(WRITER, Ordering::Relaxed);
+                reader.state.store(WRITER, Ordering::Relaxed);
                 break
             } else {
                 thread::yield_now();
@@ -261,11 +261,12 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> fo
             if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
                 let elem = unsafe{(*reader).map.get(&key)};
                 let r = act(elem);
+                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
                 break r
             } else {
+                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
                 thread::yield_now();
             }
-            unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
         }
     }
 
@@ -280,11 +281,12 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> fo
             if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
                 let map = unsafe{&(*reader).map};
                 let r = act(map);
+                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
                 break r
             } else {
+                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
                 thread::yield_now();
             }
-            unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
         }
     }
 }

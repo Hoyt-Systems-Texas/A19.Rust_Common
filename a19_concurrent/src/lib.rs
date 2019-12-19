@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate time_test;
 
 use std::sync::atomic::AtomicU64;
