@@ -78,11 +78,12 @@ unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> { }
 
 /// The multi reader, single writer map.
 pub struct MrswMap<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
-    current_reader: AtomicPtr<Box<MapContainer<K, V, E>>>,
+    current_reader: AtomicPtr<MapContainer<K, V, E>>,
+    current_writer: AtomicPtr<MapContainer<K, V, E>>,
     /// The first map.
-    map1: Box<MapContainer<K, V, E>>,
+    map1: MapContainer<K, V, E>,
     /// The second map.
-    map2: Box<MapContainer<K, V, E>>,
+    map2: MapContainer<K, V, E>,
     /// The function that is used to apply the changes to the hashmap.
     apply_change: TApplyChange,
 }
@@ -98,23 +99,27 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
         apply_change: TApplyChange) -> (MrswMapReader<K, V, E, TApplyChange>, MrswMapWriter<K, V, E, TApplyChange>) {
-        let mut reader = Box::new(MapContainer::new(
+        let mut reader = MapContainer::new(
             map1,
             READER,
-            1_024));
-        let ptr = AtomicPtr::<Box<MapContainer<K, V, E>>>::new(&mut reader);
-        let mrsp_map = Arc::new(UnsafeCell::new(MrswMap {
-            current_reader: ptr,
-            map1: reader,
-            map2: Box::new(MapContainer::new(
+            1_024);
+        let ptr = AtomicPtr::<MapContainer<K, V, E>>::new(&mut reader);
+        let mut map2 = MapContainer::new(
                 map2,
                 WRITER,
                 1_024
-            )),
+            );
+        let mrsp_map = Arc::new(UnsafeCell::new(MrswMap {
+            current_reader: ptr,
+            current_writer: AtomicPtr::new(&mut map2),
+            map1: reader,
+            map2,
             apply_change
         }));
+
         let v = unsafe {&mut *mrsp_map.get()};
         v.current_reader.store(&mut v.map1, Ordering::Relaxed);
+        v.current_writer.store(&mut v.map2, Ordering::Relaxed);
         (
             MrswMapReader {
                 map: mrsp_map.clone(),
@@ -187,27 +192,23 @@ pub trait WriterMap<K: Hash + Eq, V, E> {
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E> for MrswMap<K, V, E, TApplyChange> {
     /// Adds an event to the map to be processed.
     fn add_event(&mut self, event: E) {
-        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == READER {
-            (&mut self.map2, &mut self.map1)
-        } else {
-            (&mut self.map1, &mut self.map2)
-        };
+        let writer = unsafe {&mut *self.current_writer.load(Ordering::Relaxed)};
+        let reader = unsafe {&mut *self.current_reader.load(Ordering::Relaxed)};
         MrswMap::apply_int(&self.apply_change, writer, &event);
         MrswMap::<K, V, E, TApplyChange>::add_event_int(reader, event);
     }
 
     fn commit(&mut self) {
-        let (writer, reader) = if self.map1.state.load(Ordering::Relaxed) == READER {
-            (&mut self.map2, &mut self.map1)
-        } else {
-            (&mut self.map1, &mut self.map2)
-        };
+        let writer = unsafe {&mut *self.current_writer.load(Ordering::Relaxed)};
+        let reader = unsafe {&mut *self.current_reader.load(Ordering::Relaxed)};
+
         // Full memory barrier hear so we don't accidently have a thread read the wrong writer
         // value.  Need to do this immediately so we 
-        writer.state.store(READER, Ordering::Relaxed);
+        writer.state.store(READER, Ordering::SeqCst);
         reader.state.store(WRITER_PENDING, Ordering::Relaxed);
         // Need to do an atomic store of the current writer.
         self.current_reader.store(writer, Ordering::Relaxed);
+        self.current_writer.store(reader, Ordering::Relaxed);
         loop {
             // Wait for the reader count to go to zero.
             if reader.reader_count.load(Ordering::Relaxed) == 0 {
