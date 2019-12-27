@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use std::marker::PhantomData;
-use std::pin::Pin;
 use std::rc::Rc;
 use std::cell::{ UnsafeCell };
 use std::sync::atomic::{ AtomicU32, AtomicPtr, Ordering };
