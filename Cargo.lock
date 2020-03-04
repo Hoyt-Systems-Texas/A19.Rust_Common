@@ -47,6 +47,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "a19_state_machine"
+version = "0.1.0"
+dependencies = [
+ "a19_concurrent 0.1.0",
+ "a19_core 0.1.0",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
