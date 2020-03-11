@@ -20,28 +20,28 @@ unsafe impl<T> Send for MpmcQueueWrap<T> {}
 
 impl<T> MpmcQueueWrap<T> {
 
-    fn new(queue_size: usize) -> Self {
+    pub fn new(queue_size: usize) -> Self {
         let queue = UnsafeCell::new(MpmcQueue::new(queue_size));
         MpmcQueueWrap {
             queue
         }
     }
 
-    fn poll(&self) -> Option<T> {
+    pub fn poll(&self) -> Option<T> {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.poll()
         }
     }
 
-    fn offer(&self, v: T) -> bool {
+    pub fn offer(&self, v: T) -> bool {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.offer(v)
         }
     }
 
-    fn drain(&self, act: fn(T), limit: usize) -> usize {
+    pub fn drain(&self, act: fn(T), limit: usize) -> usize {
         unsafe {
             let queue = &mut *self.queue.get();
             queue.drain(act, limit)

@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 pub mod mpmc_queue;
 pub mod mpsc_queue;
 pub mod spsc_queue;
+pub mod skip_queue;
 
 pub struct PaddedUsize {
     // Make sure we are on one cache line.

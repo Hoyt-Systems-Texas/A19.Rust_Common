@@ -18,6 +18,7 @@
 //! file_prefix.commit.3
 //!
 pub mod network;
+pub mod state_machine;
 
 const EVENT_FILE_POSTFIX: &str = "events";
 const COMMIT_FILE_POSTIX: &str = "commit";
@@ -2104,6 +2105,7 @@ fn read_thread<FRead>(
                                 thread::sleep_ms(1);
                             } 
                         } else {
+                            // TODO handle the cluster message.
                             read_pos = result.next_pos();
                         }
                     },
