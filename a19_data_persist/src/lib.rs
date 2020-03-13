@@ -1,13 +1,13 @@
-pub mod raft;
 pub mod file;
+pub mod raft;
 
-use futures::{Oneshot, Future, Canceled, Poll};
+use futures::{Canceled, Future, Oneshot, Poll};
 
 /// Represents the committing of data as a future.  Since this will be distributed at some point we
 /// want to be able to batch events.
 pub struct CommitFuture<TOut> {
     /// The oneshot used to commit the future.
-    oneshot: Oneshot<TOut>
+    oneshot: Oneshot<TOut>,
 }
 
 impl<TOut> Future for CommitFuture<TOut> {
@@ -22,7 +22,6 @@ impl<TOut> Future for CommitFuture<TOut> {
 /// Used to presist an event stream to a persited store like disk.  Need to also decided how we are
 /// going to stream the events.
 pub trait PersitEventStream {
-
     /// Commits the data to a stream.  It doesn't care about the type.  Returns the transaction
     /// number.  The add needs to allow multiple writers to prevent a bottleneck.
     /// # Arguments.
@@ -38,5 +37,4 @@ pub trait PersitEventStream {
 }
 
 #[cfg(test)]
-mod tests {
-}
+mod tests {}

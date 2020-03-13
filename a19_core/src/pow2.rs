@@ -52,10 +52,8 @@ impl PowOf2 for usize {
 
 #[cfg(test)]
 pub mod tests {
-    
-    use crate::pow2:: {
-        PowOf2
-    };
+
+    use crate::pow2::PowOf2;
 
     #[test]
     pub fn is_power_of_2_test_u64() {
@@ -93,4 +91,3 @@ pub mod tests {
         assert_eq!(16, (9 as usize).next_power_of_two());
     }
 }
-

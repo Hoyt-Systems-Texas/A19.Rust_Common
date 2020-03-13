@@ -23,7 +23,7 @@ pub enum KeyCode {
     Paste,
     Redo,
     Undo,
-    Other(String)
+    Other(String),
 }
 
 pub trait KeyboardEvent {

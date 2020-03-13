@@ -18,6 +18,5 @@ pub enum ValidationError {
     MinValueUsize(usize),
     MaxValueUsize(usize),
     MaxValueU64(u64),
-    MinValueU64(u64)
+    MinValueU64(u64),
 }
-

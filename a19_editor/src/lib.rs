@@ -38,7 +38,7 @@ pub enum Cursor {
     NorthEastSouthWestResize,
     NorthWestSouthEastReize,
     ZoomIn,
-    ZoomOut
+    ZoomOut,
 }
 
 #[cfg(test)]

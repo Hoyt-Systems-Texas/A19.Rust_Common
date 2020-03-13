@@ -1,9 +1,6 @@
-use a19_data_structure::graphic:: {
-    Point
-};
+use a19_data_structure::graphic::Point;
 
 pub trait DrawingCanvas {
-    
     /// Moves the current drawing location.
     fn move_to(&mut self, point: &Point);
 

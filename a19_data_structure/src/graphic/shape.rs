@@ -1,30 +1,20 @@
-use crate::graphic:: {
-    Point,
-    Graphic,
-    BoundingBox,
-    LineSegmentOrientation
-};
+use crate::graphic::{BoundingBox, Graphic, LineSegmentOrientation, Point};
 
 use std::slice::Iter;
 
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Line {
     start: Point,
     end: Point,
 }
 
 impl Line {
-
     /// Used to create a new line.
     /// # Arguments
     /// `start` - The starting point of the line.
     /// `end` - The ending point of the line.
     fn new(start: Point, end: Point) -> Line {
-        Line {
-            start,
-            end,
-        }
+        Line { start, end }
     }
 
     /// Checks to see if a point lies on a line.  Note that that the points already need to be
@@ -33,22 +23,21 @@ impl Line {
     /// `start_point` - The starting point of the first line.
     /// `end_point` - The ending point of the first line.
     /// `point` - The point to check and see if it falls on the line.
-    pub fn on_segment(
-        start_point: &Point,
-        end_point: &Point,
-        point: &Point) -> bool {
-        point.x <= start_point.x.max(end_point.x) && point.x >= start_point.x.min(end_point.x) &&
-        point.y <= start_point.y.max(end_point.y) && point.y >= start_point.y.min(end_point.y)
+    pub fn on_segment(start_point: &Point, end_point: &Point, point: &Point) -> bool {
+        point.x <= start_point.x.max(end_point.x)
+            && point.x >= start_point.x.min(end_point.x)
+            && point.y <= start_point.y.max(end_point.y)
+            && point.y >= start_point.y.min(end_point.y)
     }
 
     /// Checks the orientation on a line.
     pub fn orientation(
         start_point: &Point,
         end_point: &Point,
-        point: &Point) -> LineSegmentOrientation {
-        let val =
-            (point.y - start_point.y) * (end_point.x - point.x) -
-            (point.x - start_point.x) * (end_point.y - point.y);
+        point: &Point,
+    ) -> LineSegmentOrientation {
+        let val = (point.y - start_point.y) * (end_point.x - point.x)
+            - (point.x - start_point.x) * (end_point.y - point.y);
         if val == 0.0 {
             LineSegmentOrientation::Collinear
         } else if val > 0.0 {
@@ -74,46 +63,28 @@ impl Line {
             true
         } else {
             match o1 {
-                LineSegmentOrientation::Collinear => {
-                    Line::on_segment(p1, p2, q1)
-                },
-                _ => {
-                    match o2 {
-                        LineSegmentOrientation::Collinear => {
-                            Line::on_segment(p1, q2, q1)
+                LineSegmentOrientation::Collinear => Line::on_segment(p1, p2, q1),
+                _ => match o2 {
+                    LineSegmentOrientation::Collinear => Line::on_segment(p1, q2, q1),
+                    _ => match o3 {
+                        LineSegmentOrientation::Collinear => Line::on_segment(p2, p1, q2),
+                        _ => match o4 {
+                            LineSegmentOrientation::Collinear => Line::on_segment(p2, q1, q2),
+                            _ => false,
                         },
-                        _ => {
-                            match o3 {
-                                LineSegmentOrientation::Collinear => {
-                                    Line::on_segment(p2, p1, q2)
-                                },
-                                _ => {
-                                    match o4 {
-                                        LineSegmentOrientation::Collinear => {
-                                            Line::on_segment(p2, q1, q2)
-                                        }
-                                        _ => {
-                                            false
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                    },
+                },
             }
         }
     }
 }
 
 pub struct Polygon {
-
     points: Vec<Point>,
-    bounding_box: BoundingBox
+    bounding_box: BoundingBox,
 }
 
 pub trait Shape: Graphic {
-
     /// Used to get the bouding box.
     fn get_bounding_box(&self) -> &BoundingBox;
 
@@ -129,13 +100,10 @@ pub trait Shape: Graphic {
 }
 
 impl Polygon {
-
     pub fn new(initial_size: usize) -> Polygon {
         Polygon {
             points: Vec::with_capacity(initial_size),
-            bounding_box: BoundingBox::new(
-                Point::new(0.0, 0.0),
-                Point::new(0.0, 0.0))
+            bounding_box: BoundingBox::new(Point::new(0.0, 0.0), Point::new(0.0, 0.0)),
         }
     }
 
@@ -176,7 +144,6 @@ impl Polygon {
 }
 
 impl Graphic for Polygon {
-
     fn normalize(&mut self, value: &f64) {
         for point in self.points.iter_mut() {
             point.normalize(value);
@@ -198,7 +165,6 @@ impl Graphic for Polygon {
 }
 
 impl Shape for Polygon {
-
     fn get_bounding_box(&self) -> &BoundingBox {
         &self.bounding_box
     }
@@ -215,7 +181,7 @@ impl Shape for Polygon {
             let mut count = 0;
             let mut i = 0;
             loop {
-                let next = (i+1) % self.points.len();
+                let next = (i + 1) % self.points.len();
 
                 let line_start = &self.points[i];
                 let line_end = &self.points[next];
@@ -239,26 +205,24 @@ impl Shape for Polygon {
             }
             count % 2 == 1
         }
-            
     }
 }
 
 pub struct Circle {
     center: Point,
     radius: f64,
-    bouding_box: BoundingBox
+    bouding_box: BoundingBox,
 }
 
 impl Circle {
-
     fn new(center: Point, radius: f64) -> Circle {
-        let mut c = Circle{
+        let mut c = Circle {
             center,
             radius,
             bouding_box: BoundingBox {
                 top_left: Point::new(0.0, 0.0),
-                bottom_right: Point::new(0.0, 0.0)
-            }
+                bottom_right: Point::new(0.0, 0.0),
+            },
         };
         c.update();
         c
@@ -288,8 +252,7 @@ impl Shape for Circle {
 
     fn is_inside(&self, point: &Point) -> bool {
         let r2 = self.radius.powi(2);
-        (point.x - self.center.x).powi(2) <= r2
-            && (point.y - self.center.y).powi(2) <= r2
+        (point.x - self.center.x).powi(2) <= r2 && (point.y - self.center.y).powi(2) <= r2
     }
 }
 
@@ -325,17 +288,14 @@ pub struct Rectangle {
     top_left: Point,
     width: f64,
     height: f64,
-    bounding_box: BoundingBox
+    bounding_box: BoundingBox,
 }
 
 impl Rectangle {
-    fn new(
-        top_left: Point,
-        width: f64,
-        height: f64) -> Rectangle {
+    fn new(top_left: Point, width: f64, height: f64) -> Rectangle {
         let bottom_right = Point {
             x: top_left.x + width,
-            y: top_left.y + height
+            y: top_left.y + height,
         };
         let top_left_c = top_left.clone();
 
@@ -345,8 +305,8 @@ impl Rectangle {
             height,
             bounding_box: BoundingBox {
                 top_left: top_left_c,
-                bottom_right
-            }
+                bottom_right,
+            },
         }
     }
 
@@ -359,14 +319,12 @@ impl Rectangle {
 }
 
 impl Rectangle {
-
     fn top_left(&self) -> &Point {
         &self.top_left
     }
 }
 
 impl Shape for Rectangle {
-
     /// Used to get the bouding box.
     fn get_bounding_box(&self) -> &BoundingBox {
         &self.bounding_box
@@ -383,15 +341,14 @@ impl Shape for Rectangle {
     /// # Arguments
     /// `point` - The point to check and see if it's inside.
     fn is_inside(&self, point: &Point) -> bool {
-        self.top_left.x <= point.x &&
-            self.bounding_box.bottom_right.x >= point.x &&
-            self.top_left.y <= point.y &&
-            self.bounding_box.bottom_right.y >= point.y
+        self.top_left.x <= point.x
+            && self.bounding_box.bottom_right.x >= point.x
+            && self.top_left.y <= point.y
+            && self.bounding_box.bottom_right.y >= point.y
     }
 }
 
 impl Graphic for Rectangle {
-
     /// Used to normalize the values between 0 and 1.
     /// # Arguments
     /// `value` - The value to normalize by.
@@ -422,20 +379,10 @@ impl Graphic for Rectangle {
     }
 }
 
-
 #[cfg(test)]
 pub mod tests {
-    use crate::graphic::shape:: {
-        Line,
-        Polygon,
-        Shape,
-        Circle,
-        Rectangle
-    };
-    use crate::graphic:: {
-        Point,
-        LineSegmentOrientation
-    };
+    use crate::graphic::shape::{Circle, Line, Polygon, Rectangle, Shape};
+    use crate::graphic::{LineSegmentOrientation, Point};
 
     #[test]
     pub fn orientation_collinear_x() {
@@ -444,7 +391,7 @@ pub mod tests {
 
         let p2 = Point::new(10.0, 15.0);
         let p3 = Point::new(10.0, 25.0);
-        
+
         let or1 = Line::orientation(&p1, &q1, &p2);
         let or2 = Line::orientation(&p1, &q1, &p3);
 
@@ -459,7 +406,7 @@ pub mod tests {
 
         let p2 = Point::new(15.0, 20.0);
         let p3 = Point::new(25.0, 20.0);
-        
+
         let or1 = Line::orientation(&p1, &q1, &p2);
         let or2 = Line::orientation(&p1, &q1, &p3);
 
@@ -534,36 +481,18 @@ pub mod tests {
     #[test]
     pub fn polygon_add_test() {
         let mut polygon = Polygon::new(20);
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
-        polygon.add(Point {
-            x: 15.0,
-            y: 15.0
-        });
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
+        polygon.add(Point { x: 10.0, y: 10.0 });
+        polygon.add(Point { x: 15.0, y: 15.0 });
+        polygon.add(Point { x: 10.0, y: 10.0 });
         assert!(polygon.is_valid())
     }
 
     #[test]
     pub fn polygon_overlap_test() {
         let mut polygon = Polygon::new(20);
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
-        polygon.add(Point {
-            x: 15.0,
-            y: 15.0
-        });
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
+        polygon.add(Point { x: 10.0, y: 10.0 });
+        polygon.add(Point { x: 15.0, y: 15.0 });
+        polygon.add(Point { x: 10.0, y: 10.0 });
         let r = polygon.is_inside(&Point::new(11.0, 11.0));
         assert!(r);
     }
@@ -571,18 +500,9 @@ pub mod tests {
     #[test]
     pub fn polygon_not_inside_test() {
         let mut polygon = Polygon::new(20);
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
-        polygon.add(Point {
-            x: 15.0,
-            y: 15.0
-        });
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
+        polygon.add(Point { x: 10.0, y: 10.0 });
+        polygon.add(Point { x: 15.0, y: 15.0 });
+        polygon.add(Point { x: 10.0, y: 10.0 });
         let r = polygon.is_inside(&Point::new(9.0, 11.0));
         assert!(!r);
     }
@@ -590,18 +510,9 @@ pub mod tests {
     #[test]
     pub fn polygon_on_edget_test() {
         let mut polygon = Polygon::new(20);
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
-        polygon.add(Point {
-            x: 15.0,
-            y: 15.0
-        });
-        polygon.add(Point {
-            x: 10.0,
-            y: 10.0
-        });
+        polygon.add(Point { x: 10.0, y: 10.0 });
+        polygon.add(Point { x: 15.0, y: 15.0 });
+        polygon.add(Point { x: 10.0, y: 10.0 });
         let r = polygon.is_inside(&Point::new(11.0, 11.0));
         assert!(r);
     }

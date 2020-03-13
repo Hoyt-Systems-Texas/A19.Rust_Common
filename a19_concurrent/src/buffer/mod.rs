@@ -1,6 +1,6 @@
 pub mod atomic_buffer;
-pub mod ring_buffer;
 pub mod mmap_buffer;
+pub mod ring_buffer;
 
 /// Used to find the complement of power of 2.
 /// # Arguments
@@ -21,12 +21,11 @@ pub fn align(value: usize, alignment: usize) -> usize {
 
 pub enum ByteOrderType {
     LittleEndian,
-    BigEndian
+    BigEndian,
 }
 
 /// A trait for a direct byte buffer.
 pub trait DirectByteBuffer {
-
     /// Used to get the capcity of the buffer.
     fn capacity(&self) -> usize;
 
@@ -124,7 +123,7 @@ pub trait DirectByteBuffer {
 #[cfg(test)]
 mod test {
 
-    use crate::buffer::{complement, align};
+    use crate::buffer::{align, complement};
 
     #[test]
     pub fn complement_test() {

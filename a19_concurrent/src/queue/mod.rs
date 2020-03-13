@@ -2,28 +2,26 @@ use std::sync::atomic::AtomicUsize;
 
 pub mod mpmc_queue;
 pub mod mpsc_queue;
-pub mod spsc_queue;
 pub mod skip_queue;
+pub mod spsc_queue;
 
 pub struct PaddedUsize {
     // Make sure we are on one cache line.
     #[warn(dead_code)]
-    padding: [usize; 15], 
-    pub counter: AtomicUsize
+    padding: [usize; 15],
+    pub counter: AtomicUsize,
 }
 
 impl PaddedUsize {
     pub fn new(initial_value: usize) -> Self {
         PaddedUsize {
             padding: [0; 15],
-            counter: AtomicUsize::new(0)
+            counter: AtomicUsize::new(0),
         }
-    } 
+    }
 }
 
-
 pub trait ConcurrentQueue<T> {
-
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T>;
 
@@ -38,5 +36,4 @@ pub trait ConcurrentQueue<T> {
     /// # Returns
     /// The number of items that where returned.
     fn drain(&mut self, act: fn(T), limit: usize) -> usize;
-
 }

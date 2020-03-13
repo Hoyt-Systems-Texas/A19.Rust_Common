@@ -1,5 +1,5 @@
+use crate::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use std::collections::VecDeque;
-use crate::queue::mpsc_queue::{ MpscQueueWrap, MpscQueueReceive };
 
 enum ActiveQueue {
     Primary,
@@ -14,7 +14,7 @@ pub struct SkipQueueReader<M> {
 
 unsafe impl<M> Send for SkipQueueReader<M> {}
 
-pub fn crate_skip_queue<M>(size: usize) -> (MpscQueueWrap<M>, SkipQueueReader<M>) {
+pub fn create_skip_queue<M>(size: usize) -> (MpscQueueWrap<M>, SkipQueueReader<M>) {
     let (queue_writer, queue_reader) = MpscQueueWrap::<M>::new(size);
     let reader = SkipQueueReader {
         queue_reader,
@@ -25,13 +25,10 @@ pub fn crate_skip_queue<M>(size: usize) -> (MpscQueueWrap<M>, SkipQueueReader<M>
 }
 
 impl<M> SkipQueueReader<M> {
-
     /// Used to get the value out of the queue.
     pub fn poll(&mut self) -> Option<M> {
         match self.current_queue {
-            ActiveQueue::Primary => {
-                self.queue_reader.poll()
-            },
+            ActiveQueue::Primary => self.queue_reader.poll(),
             ActiveQueue::SkipQueue => {
                 if self.skip_queue.len() > 0 {
                     self.skip_queue.pop_front()
@@ -60,12 +57,12 @@ impl<M> SkipQueueReader<M> {
 
 #[cfg(test)]
 mod test {
-    
+
     use crate::queue::skip_queue::crate_skip_queue;
-    
+
     #[test]
     pub fn skip_queue_test() {
-        let (writer, mut reader) = crate_skip_queue::<i32>(128);
+        let (writer, mut reader) = create_skip_queue::<i32>(128);
         writer.offer(1);
         writer.offer(2);
         reader.skip(-1);

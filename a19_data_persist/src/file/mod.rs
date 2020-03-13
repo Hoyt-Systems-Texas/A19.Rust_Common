@@ -1,33 +1,30 @@
+use a19_concurrent::buffer::align;
+use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
-use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
-use a19_concurrent::buffer::{align};
-use std::fs::OpenOptions;
-use std::sync::atomic::{ fence, Ordering };
-use std::sync::Arc;
 use std::cell::UnsafeCell;
+use std::fs::OpenOptions;
 use std::path::Path;
+use std::sync::atomic::{fence, Ordering};
+use std::sync::Arc;
 
 pub type MessageId = u64;
 pub type MessageTypeId = i32;
 
 pub struct MessageFileStoreRead {
-    store: Arc<UnsafeCell<MessageFileStore>>
+    store: Arc<UnsafeCell<MessageFileStore>>,
 }
 
 impl MessageFileStoreRead {
-
     /// Reads a message at a specified location.
     /// # Arguments
     /// `pos` - The position to read in.
     /// `act` - The action to run for the messages.
     /// # Returns
     /// The position of the next message.
-    pub fn read<'a, F>(&'a self,
-        pos: usize, 
-        act: F)
-        -> Result<usize> 
-        where F: FnOnce(i32, u64, &'a [u8])
+    pub fn read<'a, F>(&'a self, pos: usize, act: F) -> Result<usize>
+    where
+        F: FnOnce(i32, u64, &'a [u8]),
     {
         unsafe {
             let store = &mut *self.store.get();
@@ -35,9 +32,7 @@ impl MessageFileStoreRead {
         }
     }
 
-    pub fn read_new<'a>(
-        &self,
-        pos: &usize) -> Result<MessageRead<'a>> {
+    pub fn read_new<'a>(&self, pos: &usize) -> Result<MessageRead<'a>> {
         unsafe {
             let store = &mut *self.store.get();
             store.read_new(pos)
@@ -48,7 +43,8 @@ impl MessageFileStoreRead {
         &'a self,
         pos: &usize,
         max_message_id: &u64,
-        max_length: &usize) -> Result<MessageBlock<'a>> {
+        max_length: &usize,
+    ) -> Result<MessageBlock<'a>> {
         let store = unsafe { &mut *self.store.get() };
         store.read_block(pos, max_message_id, max_length)
     }
@@ -58,24 +54,21 @@ unsafe impl Sync for MessageFileStoreRead {}
 unsafe impl Send for MessageFileStoreRead {}
 
 pub struct MessageFileStoreWrite {
-    store: Arc<UnsafeCell<MessageFileStore>>
+    store: Arc<UnsafeCell<MessageFileStore>>,
 }
 
 impl MessageFileStoreWrite {
-
     /// Writes a message to the buffer.
-    pub fn write(&self,
+    pub fn write(
+        &self,
         position: &usize,
         msg_type_id: &i32,
         message_id: &u64,
-        buffer: &[u8]) -> Result<usize> {
+        buffer: &[u8],
+    ) -> Result<usize> {
         unsafe {
             let store = &mut *self.store.get();
-            store.write(
-                position,
-                msg_type_id,
-                message_id,
-                buffer)
+            store.write(position, msg_type_id, message_id, buffer)
         }
     }
 
@@ -95,7 +88,7 @@ unsafe impl Sync for MessageFileStoreWrite {}
 /// the building blocks for raft protocol.
 pub struct MessageFileStore {
     /// The buffer we are writing to.
-    buffer: MemoryMappedInt
+    buffer: MemoryMappedInt,
 }
 
 unsafe impl Send for MessageFileStore {}
@@ -117,31 +110,30 @@ const ALIGNMENT: usize = HEADER_SIZE;
 /// +---------------------------------------------------------------+ 64
 /// | Message Id                                                    |
 /// |                                                               | 96
-/// |                                                               | 
+/// |                                                               |
 /// +---------------------------------------------------------------+ 128
 /// |                   Message Body                                ...
 /// ...                                                             |
 /// +---------------------------------------------------------------+
 impl MessageFileStore {
-
     /// Creates a new file store.
     /// # Arguments
     /// path - The path to crate the file.
     /// file_size - The size of the file to crate.  This is preallocated for performance reasons.
     pub unsafe fn new<P: AsRef<Path>>(
         path: &P,
-        file_size: usize) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
+        file_size: usize,
+    ) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
         // Need to make sure the file size is aligned correctly.
         let buffer = MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?;
-        let file_store = MessageFileStore {
-            buffer
-        };
+        let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
-        Ok((MessageFileStoreRead{
-            store: cell.clone()
-        }, MessageFileStoreWrite {
-            store: cell
-        }))
+        Ok((
+            MessageFileStoreRead {
+                store: cell.clone(),
+            },
+            MessageFileStoreWrite { store: cell },
+        ))
     }
 
     /// Used to open a buffer file.
@@ -150,36 +142,34 @@ impl MessageFileStore {
     /// `path` - The path of the file to open.
     /// # Return
     /// The read and writers for the file.
-    pub unsafe fn open<P: AsRef<Path>> (
-        path: &P) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
+    pub unsafe fn open<P: AsRef<Path>>(
+        path: &P,
+    ) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(false)
             .open(path)?;
         let buffer = MemoryMappedInt::open(file)?;
-        let file_store = MessageFileStore {
-            buffer
-        };
+        let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
-        Ok((MessageFileStoreRead{
-            store: cell.clone()
-        }, MessageFileStoreWrite {
-            store:cell
-        }))
+        Ok((
+            MessageFileStoreRead {
+                store: cell.clone(),
+            },
+            MessageFileStoreWrite { store: cell },
+        ))
     }
 
     /// Opens a file for writting only.
     /// # Arguments
     /// `path` - The path of the file to open.
-    pub unsafe fn open_write<P: AsRef<Path>> (
+    pub unsafe fn open_write<P: AsRef<Path>>(
         path: &P,
-        file_size: usize) -> std::io::Result<MessageFileStoreWrite> {
+        file_size: usize,
+    ) -> std::io::Result<MessageFileStoreWrite> {
         let buffer = if path.as_ref().exists() {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(path)?;
+            let file = OpenOptions::new().read(true).write(true).open(path)?;
             MemoryMappedInt::open(file)?
         } else {
             let file = OpenOptions::new()
@@ -189,32 +179,25 @@ impl MessageFileStore {
                 .open(path)?;
             MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?
         };
-        let file_store = MessageFileStore {
-            buffer
-        };
+        let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
-        Ok(MessageFileStoreWrite {
-            store:cell
-        })
+        Ok(MessageFileStoreWrite { store: cell })
     }
 
     /// Opens a file that is readonly.
     /// # Arguments
     /// `path` - The path of the file to open to read.
-    pub unsafe fn open_readonly<P: AsRef<Path>> (
-        path: &P) -> std::io::Result<MessageFileStoreRead> {
+    pub unsafe fn open_readonly<P: AsRef<Path>>(path: &P) -> std::io::Result<MessageFileStoreRead> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(false)
             .open(path)?;
         let buffer = MemoryMappedInt::open(file)?;
-        let file_store = MessageFileStore {
-            buffer
-        };
+        let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
-        Ok(MessageFileStoreRead{
-            store: cell.clone()
+        Ok(MessageFileStoreRead {
+            store: cell.clone(),
         })
     }
 }
@@ -222,7 +205,6 @@ impl MessageFileStore {
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl From<std::io::Error> for Error {
-
     fn from(err: std::io::Error) -> Self {
         Error::FileError(err)
     }
@@ -240,12 +222,16 @@ pub enum Error {
     /// No message at the location.
     NoMessage,
     /// Not enough space to read the message.
-    NotEnoughSpace{message_size: u32, position: usize, capacity: usize, remaining: usize}
+    NotEnoughSpace {
+        message_size: u32,
+        position: usize,
+        capacity: usize,
+        remaining: usize,
+    },
 }
 
 /// Represents the storage of messages.
 pub trait MessageStore {
-
     /// The size of the file.
     fn size(&self) -> usize;
 
@@ -258,19 +244,16 @@ pub trait MessageStore {
     /// `act` - The action to run.
     /// # Returns
     /// The position of the next message.
-    fn read<'a, F>(&'a self,
-        pos: &usize,
-        act: F) -> Result<usize>
-        where F: FnOnce(i32, u64, &'a [u8]);
+    fn read<'a, F>(&'a self, pos: &usize, act: F) -> Result<usize>
+    where
+        F: FnOnce(i32, u64, &'a [u8]);
 
     /// Reads in a message from a buffer.
     /// # Arguments
     /// `pos` - The position to read in the memory.
     /// # Returns
     /// The message read in.
-    fn read_new<'a>(
-        &'a self,
-        pos: &usize) -> Result<MessageRead<'a>>;
+    fn read_new<'a>(&'a self, pos: &usize) -> Result<MessageRead<'a>>;
 
     /// Used to read in a block of messages.  Useful for sending the blocks over a network in a
     /// batch.
@@ -282,7 +265,8 @@ pub trait MessageStore {
         &'a self,
         pos: &usize,
         max_message_id: &u64,
-        max_length: &usize) -> Result<MessageBlock<'a>>;
+        max_length: &usize,
+    ) -> Result<MessageBlock<'a>>;
 
     /// Writes a message to the buffer.
     /// # Arguments
@@ -291,15 +275,16 @@ pub trait MessageStore {
     /// `buffer` - THe buffer for the message.
     /// # returns
     /// The next position in the buffer.
-    fn write(&mut self,
+    fn write(
+        &mut self,
         position: &usize,
         msg_type_id: &i32,
         message_id: &u64,
-        buffer: &[u8]) -> Result<usize>;
+        buffer: &[u8],
+    ) -> Result<usize>;
 }
 
 impl MessageFileStore {
-
     /// Calculates the position.
     /// # Arguments
     /// `position` - The starting position.
@@ -331,12 +316,8 @@ impl MessageFileStore {
     /// Forces the file to flush to disk.
     pub fn flush(&mut self) -> Result<()> {
         match self.buffer.flush() {
-            Ok(_) => {
-                Ok(())
-            },
-            Err(e) => {
-                Err(Error::FileError(e))
-            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::FileError(e)),
         }
     }
 }
@@ -346,45 +327,40 @@ pub struct MessageRead<'a> {
     msg_type_id: MessageTypeId,
     message_id: MessageId,
     bytes: &'a [u8],
-    next_pos: usize
+    next_pos: usize,
 }
 
 pub struct MessageBlock<'a> {
     pub message_id_start: u64,
     pub message_id_end: u64,
     pub bytes: &'a [u8],
-    pub next_pos: usize
+    pub next_pos: usize,
 }
 
 impl<'a> MessageBlock<'a> {
-    
     /// Creates a new message block.
-    fn new(
-        message_id_start: u64,
-        message_id_end: u64,
-        bytes: &'a [u8],
-        next_pos: usize) -> Self {
+    fn new(message_id_start: u64, message_id_end: u64, bytes: &'a [u8], next_pos: usize) -> Self {
         MessageBlock {
             message_id_start,
             message_id_end,
             bytes,
-            next_pos
+            next_pos,
         }
     }
 }
 
 impl<'a> MessageRead<'a> {
-
-   fn new(
+    fn new(
         msg_type_id: MessageTypeId,
         message_id: MessageId,
         bytes: &'a [u8],
-        next_pos: usize) -> Self {
+        next_pos: usize,
+    ) -> Self {
         MessageRead {
             msg_type_id,
             message_id,
             bytes,
-            next_pos
+            next_pos,
         }
     }
 
@@ -405,9 +381,7 @@ impl<'a> MessageRead<'a> {
     }
 }
 
-
 impl MessageStore for MessageFileStore {
-
     /// The size of the file.
     fn size(&self) -> usize {
         self.buffer.capacity()
@@ -422,16 +396,14 @@ impl MessageStore for MessageFileStore {
     /// # Arguments
     /// `pos` - The starting position of the message.
     /// `act` - The action to run.
-    fn read<'a, F>(&'a self,
-        pos: &usize,
-        act: F)
-        -> Result<usize> 
-        where F: FnOnce(i32, u64, &'a [u8])
+    fn read<'a, F>(&'a self, pos: &usize, act: F) -> Result<usize>
+    where
+        F: FnOnce(i32, u64, &'a [u8]),
     {
         if *pos > self.size() - ALIGNMENT {
             Err(Error::PositionOutOfRange(*pos))
         } else {
-            fence(Ordering::Acquire);  // This fence is here so we get the latest value. LoadLoad
+            fence(Ordering::Acquire); // This fence is here so we get the latest value. LoadLoad
             let size = self.buffer.get_u32(pos);
             if size == 0 {
                 Err(Error::NoMessage)
@@ -440,16 +412,23 @@ impl MessageStore for MessageFileStore {
                 // Check to see if we have enough space.
                 let remaining = self.buffer.capacity() - *pos;
                 if remaining < aligned {
-                    Err(Error::NotEnoughSpace{
-                        capacity: self.buffer.capacity(), 
+                    Err(Error::NotEnoughSpace {
+                        capacity: self.buffer.capacity(),
                         message_size: size,
                         position: *pos,
-                        remaining})
+                        remaining,
+                    })
                 } else {
-                    let message_type = self.buffer.get_i32(&MessageFileStore::calculate_msg_type_pos(pos));
-                    let message_id = self.buffer.get_u64(&MessageFileStore::calculate_message_id_pos(pos));
+                    let message_type = self
+                        .buffer
+                        .get_i32(&MessageFileStore::calculate_msg_type_pos(pos));
+                    let message_id = self
+                        .buffer
+                        .get_u64(&MessageFileStore::calculate_message_id_pos(pos));
                     let body_size = size as usize - HEADER_SIZE;
-                    let bytes = self.buffer.get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
+                    let bytes = self
+                        .buffer
+                        .get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
                     act(message_type, message_id, bytes);
                     Ok(aligned + pos)
                 }
@@ -460,13 +439,11 @@ impl MessageStore for MessageFileStore {
     /// Used to read in a message.
     /// # Arguments
     /// `pos` - The position to read in the message at.
-    fn read_new<'a>(
-        &'a self,
-        pos: &usize) -> Result<MessageRead<'a>> {
+    fn read_new<'a>(&'a self, pos: &usize) -> Result<MessageRead<'a>> {
         if *pos > self.size() - ALIGNMENT {
             Err(Error::PositionOutOfRange(*pos))
         } else {
-            fence(Ordering::Acquire);  // This fence is here so we get the latest value. LoadLoad
+            fence(Ordering::Acquire); // This fence is here so we get the latest value. LoadLoad
             let size = self.buffer.get_u32(pos);
             if size == 0 {
                 Err(Error::NoMessage)
@@ -475,16 +452,23 @@ impl MessageStore for MessageFileStore {
                 // Check to see if we have enough space.
                 let remaining = self.buffer.capacity() - *pos;
                 if remaining < aligned {
-                    Err(Error::NotEnoughSpace{
-                        capacity: self.buffer.capacity(), 
+                    Err(Error::NotEnoughSpace {
+                        capacity: self.buffer.capacity(),
                         message_size: size,
                         position: *pos,
-                        remaining})
+                        remaining,
+                    })
                 } else {
-                    let message_type = self.buffer.get_i32(&MessageFileStore::calculate_msg_type_pos(pos));
-                    let message_id = self.buffer.get_u64(&MessageFileStore::calculate_message_id_pos(pos));
+                    let message_type = self
+                        .buffer
+                        .get_i32(&MessageFileStore::calculate_msg_type_pos(pos));
+                    let message_id = self
+                        .buffer
+                        .get_u64(&MessageFileStore::calculate_message_id_pos(pos));
                     let body_size = size as usize - HEADER_SIZE;
-                    let bytes = self.buffer.get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
+                    let bytes = self
+                        .buffer
+                        .get_bytes(&MessageFileStore::calculate_body_pos(pos), &body_size);
                     let next_pos = aligned + pos;
                     Ok(MessageRead::new(message_type, message_id, bytes, next_pos))
                 }
@@ -496,7 +480,8 @@ impl MessageStore for MessageFileStore {
         &'a self,
         pos: &usize,
         max_message_id: &u64,
-        max_length: &usize) -> Result<MessageBlock<'a>> {
+        max_length: &usize,
+    ) -> Result<MessageBlock<'a>> {
         fence(Ordering::Acquire);
         let mut current_pos = *pos;
         let mut length = 0;
@@ -506,17 +491,19 @@ impl MessageStore for MessageFileStore {
             let size = align(self.buffer.get_u32(&current_pos) as usize, HEADER_SIZE);
             if size == 0 || size + length > *max_length {
                 if length == 0 {
-                    break Err(Error::NoMessage)
+                    break Err(Error::NoMessage);
                 } else {
                     break Ok(MessageBlock::new(
-                            start_message_id,
-                            last_message_id,
-                            self.buffer.get_bytes(pos, &length),
-                            *pos + length
-                    ))
+                        start_message_id,
+                        last_message_id,
+                        self.buffer.get_bytes(pos, &length),
+                        *pos + length,
+                    ));
                 }
             } else {
-                let message_id = self.buffer.get_u64(&MessageFileStore::calculate_message_id_pos(&current_pos));
+                let message_id = self
+                    .buffer
+                    .get_u64(&MessageFileStore::calculate_message_id_pos(&current_pos));
                 if message_id <= *max_message_id {
                     last_message_id = message_id;
                     if start_message_id == 0 {
@@ -530,10 +517,10 @@ impl MessageStore for MessageFileStore {
                             start_message_id,
                             last_message_id,
                             self.buffer.get_bytes(pos, &length),
-                            *pos + length
-                        ))
+                            *pos + length,
+                        ));
                     } else {
-                        break Err(Error::NoMessage)
+                        break Err(Error::NoMessage);
                     }
                 }
             }
@@ -547,11 +534,13 @@ impl MessageStore for MessageFileStore {
     /// `buffer` - THe buffer for the message.
     /// # returns
     /// The next position in the buffer.
-    fn write(&mut self,
+    fn write(
+        &mut self,
         position: &usize,
         msg_type_id: &i32,
         message_id: &u64,
-        buffer: &[u8]) -> Result<usize> {
+        buffer: &[u8],
+    ) -> Result<usize> {
         let size = HEADER_SIZE + buffer.len();
         let aligned = align(size, ALIGNMENT); // This is the aligned value at 32 bits
         if self.size() < *position {
@@ -559,15 +548,10 @@ impl MessageStore for MessageFileStore {
         } else if aligned > (self.size() - *position) {
             Err(Error::Full)
         } else {
-            let message_id_pos = MessageFileStore::calculate_message_id_pos(
-                position
-            );
-            let message_size_pos = MessageFileStore::calculate_msg_size_pos(
-                position);
-            let message_type_pos = MessageFileStore::calculate_msg_type_pos(
-                position);
-            let message_body = MessageFileStore::calculate_body_pos(
-                position);
+            let message_id_pos = MessageFileStore::calculate_message_id_pos(position);
+            let message_size_pos = MessageFileStore::calculate_msg_size_pos(position);
+            let message_type_pos = MessageFileStore::calculate_msg_type_pos(position);
+            let message_body = MessageFileStore::calculate_body_pos(position);
             // Already verified it is small enought to fit in a u32.
             let size = size as u32;
             self.buffer.put_i32(&message_type_pos, *msg_type_id);
@@ -579,13 +563,12 @@ impl MessageStore for MessageFileStore {
             Ok(aligned + *position)
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::file::{ MessageFileStore, MessageStore };
+    use crate::file::{MessageFileStore, MessageStore};
     use std::fs::remove_file;
     use std::path::Path;
 
@@ -603,37 +586,34 @@ mod tests {
 
     #[test]
     pub fn create_test() {
-        let test_file = create_test_file("");        
-        let (read, write) = unsafe { MessageFileStore::new(
-            &test_file,
-            2048).unwrap()
-        };
-        
-        let read_again = unsafe {MessageFileStore::open_readonly(&test_file).unwrap()};
-        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        let test_file = create_test_file("");
+        let (read, write) = unsafe { MessageFileStore::new(&test_file, 2048).unwrap() };
+
+        let read_again = unsafe { MessageFileStore::open_readonly(&test_file).unwrap() };
+        let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
         write.write(&0, &1, &2, &bytes[0..8]).unwrap();
         write.flush().unwrap();
         read.read(0, |msg_type, message_id, body| {
             assert_eq!(msg_type, 1);
             assert_eq!(message_id, 2);
             assert_eq!(body.len(), 8);
-        }).unwrap();
-        read_again.read(0, |msg_type, message_id, body| {
-            assert_eq!(msg_type, 1);
-            assert_eq!(message_id, 2);
-            assert_eq!(body.len(), 8);
-        }).unwrap();
+        })
+        .unwrap();
+        read_again
+            .read(0, |msg_type, message_id, body| {
+                assert_eq!(msg_type, 1);
+                assert_eq!(message_id, 2);
+                assert_eq!(body.len(), 8);
+            })
+            .unwrap();
     }
 
     #[test]
     pub fn read_block_test() {
         let test_file = create_test_file("read_block_test");
-        let (read, write) = unsafe { MessageFileStore::new(
-            &test_file,
-            2048).unwrap()
-        };
-        
-        let bytes: Vec<u8>  = vec!(10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32);
+        let (read, write) = unsafe { MessageFileStore::new(&test_file, 2048).unwrap() };
+
+        let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
         let mut pos = write.write(&0, &2, &1, &bytes[0..8]).unwrap();
         pos = write.write(&pos, &2, &2, &bytes[0..8]).unwrap();
         pos = write.write(&pos, &2, &3, &bytes[0..9]).unwrap();
@@ -657,5 +637,4 @@ mod tests {
         assert_eq!(4, r.message_id_end);
         assert_eq!(128, r.next_pos);
     }
-
 }

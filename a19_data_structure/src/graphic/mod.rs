@@ -1,16 +1,13 @@
 pub mod matrix_2d;
 pub mod shape;
 
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LineSegmentOrientation {
     /// The points are on the same line.
     Collinear,
@@ -19,7 +16,6 @@ pub enum LineSegmentOrientation {
 }
 
 pub trait Graphic {
-
     /// Used to normalize the values between 0 and 1.
     /// # Arguments
     /// `value` - The value to normalize by.
@@ -38,15 +34,11 @@ pub trait Graphic {
 }
 
 impl Point {
-
     /// Used to create a new point.
     /// `x` - The x coordinate.
     /// `y` - The y coordinate.
     pub fn new(x: f64, y: f64) -> Point {
-        Point {
-            x,
-            y
-        }
+        Point { x, y }
     }
     /// Used to calculate the distance between 2 points.
     /// # Arguments
@@ -62,11 +54,9 @@ impl Point {
     pub fn centroid(start: &f64, end: &f64) -> f64 {
         start + (end - start)
     }
-
 }
 
 impl Graphic for Point {
-
     fn normalize(&mut self, value: &f64) {
         self.x = self.x / value;
         self.y = self.x / value;
@@ -83,19 +73,17 @@ impl Graphic for Point {
     }
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BoundingBox {
     top_left: Point,
     bottom_right: Point,
 }
 
 impl BoundingBox {
-
     pub fn new(top_left: Point, bottom_right: Point) -> BoundingBox {
         BoundingBox {
             top_left,
-            bottom_right
+            bottom_right,
         }
     }
 
@@ -129,32 +117,33 @@ impl BoundingBox {
     pub fn center(&self) -> Point {
         Point::new(
             Point::centroid(&self.bottom_right.x, &self.top_left.x),
-            Point::centroid(&self.bottom_right.y, &self.top_left.y))
+            Point::centroid(&self.bottom_right.y, &self.top_left.y),
+        )
     }
 
     /// Checks to see if a box is inside of another box.
     /// # Arguments
     /// `other_box` - The other box to check.
     pub fn inside_box(&self, other_box: &BoundingBox) -> bool {
-        self.top_left.x <= other_box.top_left.x &&
-            self.top_left.y <= other_box.top_left.y &&
-            self.bottom_right.x >= other_box.bottom_right.x &&
-            self.bottom_right.y >= other_box.bottom_right.y
+        self.top_left.x <= other_box.top_left.x
+            && self.top_left.y <= other_box.top_left.y
+            && self.bottom_right.x >= other_box.bottom_right.x
+            && self.bottom_right.y >= other_box.bottom_right.y
     }
 
     /// Checks to see if a point is inside of a box.
     /// # Arguments
     /// `point` - The point to check and see if the box is inside.
     pub fn inside_point(&self, point: &Point) -> bool {
-        self.top_left.x <= point.x &&
-            self.top_left.y <= point.y &&
-            self.bottom_right.x >= point.x &&
-            self.bottom_right.y >= point.y
+        self.top_left.x <= point.x
+            && self.top_left.y <= point.y
+            && self.bottom_right.x >= point.x
+            && self.bottom_right.y >= point.y
     }
 
     /// Checks to see if 2 bounding boxes overlap each other.
     /// https://gamedev.stackexchange.com/questions/586/what-is-the-fastest-way-to-work-out-2d-bounding-box-intersection
-    /// # Arguments 
+    /// # Arguments
     /// `other_box` - The other box to check.
     pub fn is_intersected(&self, other_box: &BoundingBox) -> bool {
         !(other_box.top_left.x > self.bottom_right.x
@@ -167,9 +156,7 @@ impl BoundingBox {
     /// # Arguments
     /// `other_box` - The other box we are seeing if they are touching.
     pub fn is_touching(&self, other_box: &BoundingBox) -> bool {
-        self.inside_box(other_box)
-            || other_box.inside_box(self)
-            || self.is_intersected(other_box)
+        self.inside_box(other_box) || other_box.inside_box(self) || self.is_intersected(other_box)
     }
 }
 
@@ -179,15 +166,9 @@ mod tests {
 
     #[test]
     fn distance_test() {
-        let p1 = Point {
-            x: 1.0,
-            y: 1.0,
-        };
+        let p1 = Point { x: 1.0, y: 1.0 };
 
-        let p2 = Point {
-            x: 5.0,
-            y: 4.0,
-        };
+        let p2 = Point { x: 5.0, y: 4.0 };
 
         let result = p1.distance(&p2);
         assert_eq!(result, 5.0);

@@ -9,4 +9,3 @@ pub fn next_js_rand() -> u64 {
     let mut thread = thread_rng();
     thread.next_u64() & JS_MAX_INT_MASK
 }
-

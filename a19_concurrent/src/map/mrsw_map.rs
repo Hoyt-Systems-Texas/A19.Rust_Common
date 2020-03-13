@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use std::cell::UnsafeCell;
+use std::cmp::Eq;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
-use std::cmp::Eq;
-use std::sync::atomic::{AtomicU32, Ordering, AtomicPtr};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 const READER: u32 = 1;
@@ -35,10 +35,7 @@ impl<K: Hash + Eq, V, E> MapContainer<K, V, E> {
     /// `starting_map` - The starting map to use for the container.
     /// `initial_state` - The initial state of the map.
     /// `event_stream_size` - The event stream size.
-    fn new(
-        starting_map: HashMap<K, V>,
-        initial_state: u32,
-        event_stream_size: usize) -> Self {
+    fn new(starting_map: HashMap<K, V>, initial_state: u32, event_stream_size: usize) -> Self {
         MapContainer {
             map: starting_map,
             reader_count: AtomicU32::new(0),
@@ -53,11 +50,16 @@ pub struct MrswMapReader<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>
     map: Arc<UnsafeCell<MrswMap<K, V, E, TApplyChange>>>,
 }
 
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMapReader<K, V, E, TApplyChange> {}
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMapReader<K, V, E, TApplyChange> {}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync
+    for MrswMapReader<K, V, E, TApplyChange>
+{
+}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send
+    for MrswMapReader<K, V, E, TApplyChange>
+{
+}
 
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapReader<K, V, E, TApplyChange> {
-
     pub fn get<R>(&self, key: K, act: fn(Option<&V>) -> R) -> R {
         unsafe {
             let map = &mut *self.map.get();
@@ -65,16 +67,17 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapReader<K, V
         }
     }
 
-    pub fn get_all<F, R>(&self, act: F) -> R 
-        where F: FnOnce(&HashMap<K, V>) -> R
+    pub fn get_all<F, R>(&self, act: F) -> R
+    where
+        F: FnOnce(&HashMap<K, V>) -> R,
     {
-        let map = unsafe {&mut *self.map.get()};
+        let map = unsafe { &mut *self.map.get() };
         map.get_all(act)
     }
 }
 
-unsafe impl<K: Hash + Eq, V, E> Sync for MapContainer<K, V, E> { }
-unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> { }
+unsafe impl<K: Hash + Eq, V, E> Sync for MapContainer<K, V, E> {}
+unsafe impl<K: Hash + Eq, V, E> Send for MapContainer<K, V, E> {}
 
 /// The multi reader, single writer map.
 pub struct MrswMap<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
@@ -98,35 +101,30 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
     pub fn new(
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
-        apply_change: TApplyChange) -> (MrswMapReader<K, V, E, TApplyChange>, MrswMapWriter<K, V, E, TApplyChange>) {
-        let mut reader = MapContainer::new(
-            map1,
-            READER,
-            1_024);
+        apply_change: TApplyChange,
+    ) -> (
+        MrswMapReader<K, V, E, TApplyChange>,
+        MrswMapWriter<K, V, E, TApplyChange>,
+    ) {
+        let mut reader = MapContainer::new(map1, READER, 1_024);
         let ptr = AtomicPtr::<MapContainer<K, V, E>>::new(&mut reader);
-        let mut map2 = MapContainer::new(
-                map2,
-                WRITER,
-                1_024
-            );
+        let mut map2 = MapContainer::new(map2, WRITER, 1_024);
         let mrsp_map = Arc::new(UnsafeCell::new(MrswMap {
             current_reader: ptr,
             current_writer: AtomicPtr::new(&mut map2),
             map1: reader,
             map2,
-            apply_change
+            apply_change,
         }));
 
-        let v = unsafe {&mut *mrsp_map.get()};
+        let v = unsafe { &mut *mrsp_map.get() };
         v.current_reader.store(&mut v.map1, Ordering::Relaxed);
         v.current_writer.store(&mut v.map2, Ordering::Relaxed);
         (
             MrswMapReader {
                 map: mrsp_map.clone(),
             },
-            MrswMapWriter {
-                map: mrsp_map
-            }
+            MrswMapWriter { map: mrsp_map },
         )
     }
 
@@ -134,10 +132,7 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
     /// # Arguments
     /// `map` - The map to apply the change to.
     /// `event` - The event to apply to the map.
-    fn apply_int(
-        apply_change: &TApplyChange,
-        map: &mut MapContainer<K, V, E>,
-        event: &E) {
+    fn apply_int(apply_change: &TApplyChange, map: &mut MapContainer<K, V, E>, event: &E) {
         apply_change.apply(&mut map.map, event);
     }
 
@@ -145,28 +140,30 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
     /// # Arguments
     /// `map` - The reader map.  This isn't validated.
     /// `event` - The event to add to the queue.
-    fn add_event_int(
-        map: &mut MapContainer<K, V, E>,
-        event: E) {
+    fn add_event_int(map: &mut MapContainer<K, V, E>, event: E) {
         map.event_stream.push_back(event);
     }
-
 }
 
 pub struct MrswMapWriter<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> {
-    map: Arc<UnsafeCell<MrswMap<K, V, E, TApplyChange>>>
+    map: Arc<UnsafeCell<MrswMap<K, V, E, TApplyChange>>>,
 }
 
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMapWriter<K, V, E, TApplyChange> {}
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMapWriter<K, V, E, TApplyChange> {}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync
+    for MrswMapWriter<K, V, E, TApplyChange>
+{
+}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send
+    for MrswMapWriter<K, V, E, TApplyChange>
+{
+}
 
 impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapWriter<K, V, E, TApplyChange> {
-    
     pub fn add_event(&self, event: E) {
         unsafe {
             let map = &mut *self.map.get();
             map.add_event(event);
-        }    
+        }
     }
 
     pub fn commit(&self) {
@@ -176,7 +173,6 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMapWriter<K, V
         }
     }
 }
-
 
 /// The calls to this are not thread safe and must be done using a single thread.  If you want
 /// multiple writers you need to use a mutex to achieve this.
@@ -189,21 +185,23 @@ pub trait WriterMap<K: Hash + Eq, V, E> {
     fn commit(&mut self);
 }
 
-impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E> for MrswMap<K, V, E, TApplyChange> {
+impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
+    for MrswMap<K, V, E, TApplyChange>
+{
     /// Adds an event to the map to be processed.
     fn add_event(&mut self, event: E) {
-        let writer = unsafe {&mut *self.current_writer.load(Ordering::Relaxed)};
-        let reader = unsafe {&mut *self.current_reader.load(Ordering::Relaxed)};
+        let writer = unsafe { &mut *self.current_writer.load(Ordering::Relaxed) };
+        let reader = unsafe { &mut *self.current_reader.load(Ordering::Relaxed) };
         MrswMap::apply_int(&self.apply_change, writer, &event);
         MrswMap::<K, V, E, TApplyChange>::add_event_int(reader, event);
     }
 
     fn commit(&mut self) {
-        let writer = unsafe {&mut *self.current_writer.load(Ordering::Relaxed)};
-        let reader = unsafe {&mut *self.current_reader.load(Ordering::Relaxed)};
+        let writer = unsafe { &mut *self.current_writer.load(Ordering::Relaxed) };
+        let reader = unsafe { &mut *self.current_reader.load(Ordering::Relaxed) };
 
         // Full memory barrier hear so we don't accidently have a thread read the wrong writer
-        // value.  Need to do this immediately so we 
+        // value.  Need to do this immediately so we
         writer.state.store(READER, Ordering::SeqCst);
         reader.state.store(WRITER_PENDING, Ordering::Relaxed);
         // Need to do an atomic store of the current writer.
@@ -213,7 +211,7 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
             // Wait for the reader count to go to zero.
             if reader.reader_count.load(Ordering::Relaxed) == 0 {
                 reader.state.store(WRITER, Ordering::Relaxed);
-                break
+                break;
             } else {
                 thread::yield_now();
             }
@@ -223,12 +221,8 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
         loop {
             let event = reader.event_stream.pop_front();
             match event {
-                Some(e) => {
-                    MrswMap::apply_int(&self.apply_change, reader, &e)
-                }, 
-                None => {
-                    break
-                }
+                Some(e) => MrswMap::apply_int(&self.apply_change, reader, &e),
+                None => break,
             }
         }
     }
@@ -236,7 +230,6 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> WriterMap<K, V, E>
 
 /// Used to get a value out of the map.
 pub trait ReaderMap<K: Hash + Eq, V> {
-
     /// Gets a value out of the map.  Have to have it function based since we need to know when
     /// they are done reading the data.
     /// # Arguments
@@ -250,98 +243,98 @@ pub trait ReaderMap<K: Hash + Eq, V> {
     /// since this collection is readonly.
     /// # Returns
     /// The value when you call act.
-    fn get_all<F, R>(&mut self, act: F) -> R 
-        where F: FnOnce(&HashMap<K, V>) -> R;
+    fn get_all<F, R>(&mut self, act: F) -> R
+    where
+        F: FnOnce(&HashMap<K, V>) -> R;
 }
-impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V> for MrswMap<K, V, E, TApplyChange> {
-
+impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> ReaderMap<K, V>
+    for MrswMap<K, V, E, TApplyChange>
+{
     fn get<R>(&mut self, key: K, act: fn(Option<&V>) -> R) -> R {
         loop {
             let reader = self.current_reader.load(Ordering::Relaxed);
-            unsafe {(*reader).reader_count.fetch_add(1, Ordering::Relaxed)};
+            unsafe { (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
             // Need to verify it's still the reader before moving on.  Needs to be a LoadStore
             // barrier.
-            if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
-                let elem = unsafe{(*reader).map.get(&key)};
+            if unsafe { (*reader).state.load(Ordering::SeqCst) } == READER {
+                let elem = unsafe { (*reader).map.get(&key) };
                 let r = act(elem);
-                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
-                break r
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
+                break r;
             } else {
-                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
                 thread::yield_now();
             }
         }
     }
 
-    fn get_all<F, R>(&mut self, act: F) -> R 
-        where F: FnOnce(&HashMap<K, V>) -> R
+    fn get_all<F, R>(&mut self, act: F) -> R
+    where
+        F: FnOnce(&HashMap<K, V>) -> R,
     {
         loop {
             let reader = self.current_reader.load(Ordering::Relaxed);
-            unsafe{ (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
+            unsafe { (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
             // Need to verify it's still the reader before moving on.  Needs to be a load store
             // barrier.
-            if unsafe {(*reader).state.load(Ordering::SeqCst)} == READER {
-                let map = unsafe{&(*reader).map};
+            if unsafe { (*reader).state.load(Ordering::SeqCst) } == READER {
+                let map = unsafe { &(*reader).map };
                 let r = act(map);
-                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
-                break r
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
+                break r;
             } else {
-                unsafe {(*reader).reader_count.fetch_sub(1, Ordering::Relaxed)};
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
                 thread::yield_now();
             }
         }
     }
 }
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync for MrswMap<K, V, E, TApplyChange> { }
-unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send for MrswMap<K, V, E, TApplyChange> { }
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Sync
+    for MrswMap<K, V, E, TApplyChange>
+{
+}
+unsafe impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> Send
+    for MrswMap<K, V, E, TApplyChange>
+{
+}
 
 #[cfg(test)]
 mod tests {
+    use crate::map::mrsw_map::{ApplyChanges, MrswMap, ReaderMap, WriterMap};
     use std::collections::HashMap;
-    use crate::map::mrsw_map::{MrswMap, WriterMap, ApplyChanges, ReaderMap};
 
     enum TestEvent {
-        Add{key: u64, value: String}
+        Add { key: u64, value: String },
     }
 
-    struct TestApplyChange {
-
-    }
+    struct TestApplyChange {}
 
     impl ApplyChanges<u64, String, TestEvent> for TestApplyChange {
-
         fn apply(&self, map: &mut HashMap<u64, String>, event: &TestEvent) {
             match event {
-                TestEvent::Add{key: k, value: s} => {
+                TestEvent::Add { key: k, value: s } => {
                     map.insert(*k, s.clone());
                 }
             }
         }
     }
 
-
     #[test]
     pub fn create_mrsw_map() {
-        let apply_change = TestApplyChange {
-
-        };
+        let apply_change = TestApplyChange {};
         let (reader, writer) = MrswMap::new(
             HashMap::with_capacity(10),
             HashMap::with_capacity(10),
-            apply_change
+            apply_change,
         );
-        writer.add_event(TestEvent::Add{key: 1, value: "Hi".to_owned()});
+        writer.add_event(TestEvent::Add {
+            key: 1,
+            value: "Hi".to_owned(),
+        });
         writer.commit();
-        let r = reader.get(1, |e| {
-            match e {
-                Some(r) => {
-                    r.clone()
-                },
-                None => {
-                    "".to_owned()
-                }
-            }
+        let r = reader.get(1, |e| match e {
+            Some(r) => r.clone(),
+            None => "".to_owned(),
         });
         assert_eq!("Hi", &r);
     }

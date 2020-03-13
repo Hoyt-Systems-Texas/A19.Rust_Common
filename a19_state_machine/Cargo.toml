@@ -9,3 +9,6 @@ edition = "2018"
 [dependencies]
 a19_core = { path = "../a19_core" }
 a19_concurrent = { path = "../a19_concurrent" }
+tokio = { version = "0.2", features = ["full"]}
+futures = "0.3"
+async-trait = "0.1"

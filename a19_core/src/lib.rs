@@ -1,7 +1,7 @@
 use rand::{thread_rng, RngCore};
 
-pub mod pow2;
 pub mod js;
+pub mod pow2;
 pub mod validation;
 
 /// Generates a secure random number that is 128 bit long.
@@ -15,9 +15,9 @@ pub fn next_u128_rand() -> u128 {
 #[cfg(test)]
 mod test {
 
-    use std::u64;
-    use std::u128;
     use crate::next_u128_rand;
+    use std::u128;
+    use std::u64;
 
     #[test]
     pub fn next_u128_test() {
