@@ -27,7 +27,7 @@ pub enum StateMachineResult<RESULT> {
     Ran(RESULT),
 }
 
-pub struct LoadInfo<KEY: Hash + Eq, STATE: Send, MODEL: Send> {
+pub struct LoadInfo<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL: Send> {
     pub id: KEY,
     pub last_transition_id: u64,
     pub current_state: STATE,
@@ -35,7 +35,7 @@ pub struct LoadInfo<KEY: Hash + Eq, STATE: Send, MODEL: Send> {
 }
 
 /// Represents an internal message format.  We need the ability to add a future.
-enum InternalMessage<KEY: Hash + Eq, STATE: Send, MODEL: Send, MSG, RESULT> {
+enum InternalMessage<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL: Send, MSG, RESULT> {
     UserMessage {
         key: KEY,
         msg: MSG,
@@ -52,22 +52,23 @@ enum StateMachineEvt<KEY: Hash + Eq, MSG> {
     SendMessage { key: KEY, msg: MSG },
 }
 
-struct ContextContainer<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> {
+struct ContextContainer<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL, MSG, RESULT> {
     cell: UnsafeCell<Context<KEY, STATE, MODEL, MSG, RESULT>>,
 }
 
-unsafe impl<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> Sync
+unsafe impl<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL, MSG, RESULT> Sync
     for ContextContainer<KEY, STATE, MODEL, MSG, RESULT>
 {
 }
-unsafe impl<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> Send
+unsafe impl<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL, MSG, RESULT> Send
     for ContextContainer<KEY, STATE, MODEL, MSG, RESULT>
 {
 }
 
 struct StateMachineReceiver<
+    EVT,
     KEY: Hash + Eq,
-    STATE: Send,
+    STATE: Hash + Eq + Send,
     MODEL: Send,
     MSG,
     RESULT,
@@ -78,17 +79,18 @@ struct StateMachineReceiver<
 {
     state: Arc<AtomicU32>,
     context_store: HashMap<KEY, StateMachineType<KEY, STATE, MODEL, MSG, RESULT>>,
+    state_store: HashMap<STATE, Box<dyn StatePersisted<EVT, KEY, STATE, MODEL, MSG, RESULT>>>,
     queue_reader: MpscQueueReceive<InternalMessage<KEY, STATE, MODEL, MSG, RESULT>>,
     load: Arc<F>,
 }
 
-pub struct StateMachineSender<KEY: Hash + Eq, STATE: Send, MODEL: Send, MSG, RESULT> {
+pub struct StateMachineSender<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL: Send, MSG, RESULT> {
     state: Arc<AtomicU32>,
     queue_writer: Arc<MpscQueueWrap<InternalMessage<KEY, STATE, MODEL, MSG, RESULT>>>,
     receiver_thread: JoinHandle<u32>,
 }
 
-impl<KEY: Hash + Eq, STATE: Send, MODEL: Send, MSG, RESULT> StateMachineSender<KEY, STATE, MODEL, MSG, RESULT> {
+impl<KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL: Send, MSG, RESULT> StateMachineSender<KEY, STATE, MODEL, MSG, RESULT> {
     /// Used to send a message to a state machine.
     /// # Arguments
     /// `key` - The key for the state machine.
@@ -107,8 +109,9 @@ impl<KEY: Hash + Eq, STATE: Send, MODEL: Send, MSG, RESULT> StateMachineSender<K
 /// Used to create a state machine.  Currently for the main loop uses the single writer principal.
 /// Would require finding a high speed hashmap to not do it this way.
 pub fn create_state_machine<
+    EVT,
     KEY: Hash + Eq + Clone + Send + 'static,
-    STATE: 'static + Send,
+    STATE: 'static + Hash + Eq + Send,
     MODEL: 'static + Send,
     MSG: 'static,
     RESULT: 'static,
@@ -129,11 +132,12 @@ where
     let main_thread_writer = writer.clone();
     let join_handle = thread::spawn(move || {
         let context_store = HashMap::with_capacity(100);
-        let mut receiver = StateMachineReceiver::<KEY, STATE, MODEL, MSG, RESULT, F, FT> {
+        let mut receiver = StateMachineReceiver::<EVT, KEY, STATE, MODEL, MSG, RESULT, F, FT> {
             context_store,
             load: Arc::new(load_func),
             queue_reader: reader,
             state: receiver_state,
+            state_store: HashMap::with_capacity(20),
         };
         let wait_time = Duration::from_millis(1);
         loop {
@@ -229,33 +233,31 @@ where
 }
 
 #[async_trait]
-pub trait StatePersisted<EVT, KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> {
+pub trait StatePersisted<EVT, KEY: Hash + Eq, STATE: Hash + Eq + Send, MODEL, MSG, RESULT> {
     /// The state this node if for.
-    fn state(&self) -> STATE;
+    fn state(&self) -> STATE where Self:Sized;
 
-    /// The list of events this node handles.
+    /// Called when an event is received when we are in that state.
     /// # Arguments
-    /// `act` - The action that adds the events for the state machine.
-    fn events<F>(&self, act: F)
-    where
-        F: FnMut(EventAction<EVT, KEY, STATE, MODEL, MSG, RESULT>);
+    /// `event` - The event that has been received.
+    async fn events<F>(&self, event: &EVT) -> EventActionResult<STATE> where Self:Sized;
 
     /// The entry for the state.
     /// # Arguments
     /// `evt` - The event we are enterying.
     /// `ctx` - The mutable context.
     /// `msg` - The message we are processing.
-    async fn entry(&self, evt: &EVT, ctx: &mut Context<KEY, STATE, MODEL, MSG, RESULT>, msg: &MSG);
+    async fn entry(&self, evt: &EVT, ctx: &mut Context<KEY, STATE, MODEL, MSG, RESULT>, msg: &MSG) where Self:Sized;
 
     /// Called when we exit a state.
     /// # Arguments
     /// `evt` - The event we are processing.
     /// `ctx` - The mutable context for the state transition.
     /// `msg` - The message we are processing.
-    async fn exit(&self, evt: &EVT, ctx: &mut Context<KEY, STATE, MODEL, MSG, RESULT>, msg: &MSG);
+    async fn exit(&self, evt: &EVT, ctx: &mut Context<KEY, STATE, MODEL, MSG, RESULT>, msg: &MSG) where Self: Sized;
 }
 
-enum ContextOption<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> {
+enum ContextOption<KEY: Hash + Eq, STATE:Hash + Eq + Send, MODEL, MSG, RESULT> {
     PendingLoad(PendingInfo<KEY, MSG, RESULT>),
     Loaded(Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>),
 }
@@ -354,7 +356,7 @@ impl<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> Context<KEY, STATE, MODEL, MSG, 
     }
 
     /// Mean to be run in a thread pull and can run asynchronously.
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         if self.state_machine_state.compare_and_swap(
             STATE_INACTIVE,
             STATE_RUNNING,
@@ -362,7 +364,13 @@ impl<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> Context<KEY, STATE, MODEL, MSG, 
         ) == STATE_INACTIVE
         {
             self.acquired();
-
+            loop {
+                if let Some(m) = self.queue_reader.poll() {
+                    // Get the state
+                } else {
+                    break
+                }
+            }
             self.completed();
             self.state_machine_state
                 .store(STATE_INACTIVE, Ordering::Release)
@@ -398,21 +406,11 @@ pub trait Action<KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> {
     async fn run(&self, ctx: &mut Context<KEY, STATE, MODEL, MSG, RESULT>, msg: &MSG) -> RESULT;
 }
 
-pub enum EventAction<EVT, KEY: Hash + Eq, STATE, MODEL, MSG, RESULT> {
-    GoToState {
-        event: EVT,
-        state: STATE,
-    },
-    DoAction {
-        event: EVT,
-        action: Box<dyn Action<KEY, STATE, MODEL, MSG, RESULT>>,
-    },
-    Ignore {
-        event: EVT,
-    },
-    Defer {
-        event: EVT,
-    },
+pub enum EventActionResult<STATE: Hash + Eq> {
+    GoToState { state: STATE},
+    DidAction,
+    Ignore,
+    Defer,
 }
 
 #[derive(Debug)]
