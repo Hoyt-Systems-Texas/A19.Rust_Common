@@ -73,7 +73,7 @@ impl<M> SkipQueueReader<M> {
 #[cfg(test)]
 mod test {
 
-    use crate::queue::skip_queue::crate_skip_queue;
+    use crate::queue::skip_queue::create_skip_queue;
 
     #[test]
     pub fn skip_queue_test() {

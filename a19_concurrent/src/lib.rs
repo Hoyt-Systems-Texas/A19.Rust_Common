@@ -7,6 +7,7 @@ pub mod buffer;
 pub mod event;
 pub mod map;
 pub mod queue;
+pub mod timeout;
 
 pub struct PaddedU64 {
     // Make sure we are on one cache line.
