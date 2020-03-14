@@ -53,6 +53,21 @@ impl<M> SkipQueueReader<M> {
             self.current_queue = ActiveQueue::SkipQueue
         }
     }
+
+    /// Used to get the top most item.
+    pub fn peek(&mut self) -> Option<&M> {
+        match self.current_queue {
+            ActiveQueue::Primary => self.queue_reader.peek(),
+            ActiveQueue::SkipQueue => {
+                if self.skip_queue.len() > 0 {
+                    self.skip_queue.front()
+                } else {
+                    self.current_queue = ActiveQueue::Primary;
+                    self.queue_reader.peek()
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

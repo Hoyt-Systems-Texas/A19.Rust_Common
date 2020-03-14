@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tokio::task;
 use tokio::runtime::Handle;
+use tokio::task;
 
 const STATE_INACTIVE: u32 = 0;
 const STATE_RUNNING: u32 = 1;
@@ -38,7 +38,13 @@ pub struct LoadInfo<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL: Send
 }
 
 /// Represents an internal message format.  We need the ability to add a future.
-enum InternalMessage<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL: Send, MSG: Send, RESULT> {
+enum InternalMessage<
+    KEY: Hash + Eq,
+    STATE: Hash + Eq + Send + Clone,
+    MODEL: Send,
+    MSG: Send,
+    RESULT,
+> {
     UserMessage {
         key: KEY,
         msg: MSG,
@@ -48,22 +54,31 @@ enum InternalMessage<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL: Sen
 }
 
 enum CtxMessage<MSG, RESULT, STATE> {
-    UserMessage { msg: MSG, future: MsgFuture<RESULT, STATE> },
+    UserMessage {
+        msg: MSG,
+        future: MsgFuture<RESULT, STATE>,
+    },
 }
 
 enum StateMachineEvt<KEY: Hash + Eq, MSG> {
     SendMessage { key: KEY, msg: MSG },
 }
 
-pub struct ContextContainer<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT> {
+pub struct ContextContainer<
+    KEY: Hash + Eq,
+    STATE: Hash + Eq + Send + Clone,
+    MODEL,
+    MSG: Send,
+    RESULT,
+> {
     cell: UnsafeCell<Context<KEY, STATE, MODEL, MSG, RESULT>>,
 }
 
-impl<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT> ContextContainer<
-        KEY, STATE, MODEL, MSG, RESULT>
+impl<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT>
+    ContextContainer<KEY, STATE, MODEL, MSG, RESULT>
 {
     fn ctx<'a>(&self) -> &'a mut Context<KEY, STATE, MODEL, MSG, RESULT> {
-        unsafe{&mut *self.cell.get()}
+        unsafe { &mut *self.cell.get() }
     }
 
     pub fn id(&self) -> &KEY {
@@ -111,7 +126,9 @@ impl<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT> 
 
     /// Adds a message to the queue.
     pub fn add_message(&self, msg: MSG, future: MsgFuture<RESULT, STATE>) -> bool {
-        self.ctx().queue_writer.offer(CtxMessage::UserMessage { future, msg })
+        self.ctx()
+            .queue_writer
+            .offer(CtxMessage::UserMessage { future, msg })
     }
 
     fn int_add_message(&self, msg: CtxMessage<MSG, RESULT, STATE>) {
@@ -119,20 +136,32 @@ impl<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT> 
     }
 
     fn skip_message(&self, msg: MSG, future: MsgFuture<RESULT, STATE>) -> bool {
-        self.ctx().queue_reader.skip(CtxMessage::UserMessage {msg, future});
+        self.ctx()
+            .queue_reader
+            .skip(CtxMessage::UserMessage { msg, future });
         true
     }
 
     fn start(&self) -> bool {
-        self.ctx().state_machine_state.compare_and_swap(STATE_INACTIVE, STATE_RUNNING, Ordering::AcqRel) == STATE_INACTIVE
+        self.ctx().state_machine_state.compare_and_swap(
+            STATE_INACTIVE,
+            STATE_RUNNING,
+            Ordering::AcqRel,
+        ) == STATE_INACTIVE
     }
 
     fn finish(&self) {
-        self.ctx().state_machine_state.store(STATE_INACTIVE, Ordering::Release)
+        self.ctx()
+            .state_machine_state
+            .store(STATE_INACTIVE, Ordering::Release)
     }
-    
+
     fn poll(&self) -> Option<CtxMessage<MSG, RESULT, STATE>> {
         self.ctx().queue_reader.poll()
+    }
+
+    fn peek(&self) -> Option<&CtxMessage<MSG, RESULT, STATE>> {
+        self.ctx().queue_reader.peek()
     }
 }
 
@@ -163,7 +192,13 @@ struct StateMachineReceiver<
     load: Arc<F>,
 }
 
-pub struct StateMachineSender<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL: Send, MSG: Send, RESULT> {
+pub struct StateMachineSender<
+    KEY: Hash + Eq,
+    STATE: Hash + Eq + Send + Clone,
+    MODEL: Send,
+    MSG: Send,
+    RESULT,
+> {
     state: Arc<AtomicU32>,
     queue_writer: Arc<MpscQueueWrap<InternalMessage<KEY, STATE, MODEL, MSG, RESULT>>>,
     receiver_thread: JoinHandle<u32>,
@@ -224,7 +259,7 @@ where
         if let Some(state) = states.pop() {
             state_store.insert(state.state(), state);
         } else {
-            break
+            break;
         }
     }
     let main_queue_writer = writer.clone();
@@ -345,29 +380,25 @@ pub trait StatePersisted<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL,
     /// Called when an event is received when we are in that state.
     /// # Arguments
     /// `event` - The event that has been received.
-    async fn handle_event(&self, event: &MSG, ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>) -> EventActionResult<STATE, RESULT>;
+    async fn handle_event(
+        &self,
+        event: &MSG,
+        ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>,
+    ) -> EventActionResult<STATE, RESULT>;
 
     /// The entry for the state.
     /// # Arguments
     /// `evt` - The event we are enterying.
     /// `ctx` - The mutable context.
     /// `msg` - The message we are processing.
-    async fn entry(
-        &self,
-        evt: &MSG,
-        ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>,
-    );
+    async fn entry(&self, evt: &MSG, ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>);
 
     /// Called when we exit a state.
     /// # Arguments
     /// `evt` - The event we are processing.
     /// `ctx` - The mutable context for the state transition.
     /// `msg` - The message we are processing.
-    async fn exit(
-        &self,
-        evt: &MSG,
-        ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>,
-    );
+    async fn exit(&self, evt: &MSG, ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>);
 }
 
 enum ContextOption<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL, MSG: Send, RESULT> {
@@ -403,65 +434,79 @@ pub struct StateMachineClient<MSG> {
     queue: MpscQueueWrap<MSG>,
 }
 
-async fn run<KEY: Hash + Eq + Send, STATE: Hash + Eq + Sync + Send + Clone, MODEL, MSG: Send, RESULT>(
+async fn run<
+    KEY: Hash + Eq + Send,
+    STATE: Hash + Eq + Sync + Send + Clone,
+    MODEL,
+    MSG: Send,
+    RESULT,
+>(
     ctx: Arc<ContextContainer<KEY, STATE, MODEL, MSG, RESULT>>,
-    states: Arc<HashMap<STATE, Box<dyn StatePersisted<KEY, STATE, MODEL, MSG, RESULT>>>>) {
-    println!("Got here");
-    if ctx.start()
-    {
-        ctx.acquired();
-        loop {
-            let ctx = ctx.clone();
-            if let Some(m) = ctx.poll() {
-                match m {
-                    CtxMessage::UserMessage{msg, future} => {
-                        // Get the state
-                        if let Some(state_ext) = states.get(&ctx.state()) {
-                            let result = state_ext.handle_event(&msg, ctx.clone()).await;
-                            match result {
-                                EventActionResult::DidAction{result} => {
-                                    if let Some(f) = future {
-                                        f.send(StateMachineResult::Ran(result));
-                                    }
-                                }
-                                EventActionResult::Defer => {
-                                    ctx.skip_message(msg, future);
-                                }
-                                EventActionResult::GoToState{state} => {
-                                    if let Some(new_state) = states.get(&state) {
-                                        state_ext.exit(&msg, ctx.clone()).await;                                            
-                                        ctx.set_state(state.clone());
-                                        new_state.entry(&msg, ctx).await;
+    states: Arc<HashMap<STATE, Box<dyn StatePersisted<KEY, STATE, MODEL, MSG, RESULT>>>>,
+) {
+    loop {
+        if ctx.start() {
+            ctx.acquired();
+            loop {
+                let ctx = ctx.clone();
+                if let Some(m) = ctx.poll() {
+                    match m {
+                        CtxMessage::UserMessage { msg, future } => {
+                            // Get the state
+                            if let Some(state_ext) = states.get(&ctx.state()) {
+                                let result = state_ext.handle_event(&msg, ctx.clone()).await;
+                                match result {
+                                    EventActionResult::DidAction { result } => {
                                         if let Some(f) = future {
-                                            f.send(
-                                                StateMachineResult::ChangedState(state.clone())
-                                            );
+                                            f.send(StateMachineResult::Ran(result));
                                         }
-                                    } else {
-                                        // TODO Unable to find the state.
+                                    }
+                                    EventActionResult::Defer => {
+                                        ctx.skip_message(msg, future);
+                                    }
+                                    EventActionResult::GoToState { state } => {
+                                        if let Some(new_state) = states.get(&state) {
+                                            state_ext.exit(&msg, ctx.clone()).await;
+                                            ctx.set_state(state.clone());
+                                            new_state.entry(&msg, ctx).await;
+                                            if let Some(f) = future {
+                                                f.send(StateMachineResult::ChangedState(
+                                                    state.clone(),
+                                                ));
+                                            }
+                                        } else {
+                                            // TODO Unable to find the state.
+                                        }
+                                    }
+                                    EventActionResult::Ignore => {
+                                        if let Some(f) = future {
+                                            f.send(StateMachineResult::Ignored);
+                                        }
                                     }
                                 }
-                                EventActionResult::Ignore => {
-                                    if let Some(f) = future {
-                                        f.send(StateMachineResult::Ignored);
-                                    }
-                                }
+                            } else {
+                                // TODO figure out what to do here.
                             }
-                        } else {
-                            // TODO figure out what to do here.
                         }
                     }
+                } else {
+                    break;
                 }
-            } else {
-                break;
             }
+            ctx.completed();
+            ctx.finish();
         }
-        ctx.completed();
-        ctx.finish();
+        if ctx.peek().is_none() {
+            break;
+        } else {
+            // Need to go around again.
+        }
     }
 }
 
-impl<KEY: Hash + Eq, STATE: Hash + Eq + Clone + Send, MODEL, MSG: Send, RESULT> Context<KEY, STATE, MODEL, MSG, RESULT> {
+impl<KEY: Hash + Eq, STATE: Hash + Eq + Clone + Send, MODEL, MSG: Send, RESULT>
+    Context<KEY, STATE, MODEL, MSG, RESULT>
+{
     pub fn new(
         id: KEY,
         current_state: STATE,
@@ -528,7 +573,8 @@ impl<KEY: Hash + Eq, STATE: Hash + Eq + Clone + Send, MODEL, MSG: Send, RESULT> 
 
     /// Adds a message to the queue.
     pub fn add_message(&self, msg: MSG, future: MsgFuture<RESULT, STATE>) -> bool {
-        self.queue_writer.offer(CtxMessage::UserMessage { future, msg })
+        self.queue_writer
+            .offer(CtxMessage::UserMessage { future, msg })
     }
 
     fn int_add_message(&self, msg: CtxMessage<MSG, RESULT, STATE>) {
@@ -536,7 +582,8 @@ impl<KEY: Hash + Eq, STATE: Hash + Eq + Clone + Send, MODEL, MSG: Send, RESULT> 
     }
 
     fn skip_message(&mut self, msg: MSG, future: MsgFuture<RESULT, STATE>) -> bool {
-        self.queue_reader.skip(CtxMessage::UserMessage {msg, future});
+        self.queue_reader
+            .skip(CtxMessage::UserMessage { msg, future });
         true
     }
 }
@@ -552,7 +599,7 @@ unsafe impl<KEY: Hash + Eq, STATE, MODEL, MSG: Send, RESULT> Send
 
 pub enum EventActionResult<STATE: Hash + Eq, RESULT> {
     GoToState { state: STATE },
-    DidAction { result: RESULT},
+    DidAction { result: RESULT },
     Ignore,
     Defer,
 }
@@ -560,13 +607,16 @@ pub enum EventActionResult<STATE: Hash + Eq, RESULT> {
 #[cfg(test)]
 mod tests {
 
-    use crate::{ StatePersisted, EventActionResult, Context, create_state_machine, LoadInfo, StateMachineResult, ContextContainer };
-    use async_trait:: async_trait;
-    use futures::Future;
+    use crate::{
+        create_state_machine, Context, ContextContainer, EventActionResult, LoadInfo,
+        StateMachineResult, StatePersisted,
+    };
+    use async_trait::async_trait;
     use futures::executor::block_on;
+    use futures::Future;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::runtime::Handle;
-    use std::sync::Arc;
 
     #[derive(Hash, PartialEq, Eq, Clone, Debug)]
     enum TestState {
@@ -594,36 +644,52 @@ mod tests {
 
     #[tokio::test]
     pub async fn create_state_machine_test() {
-        let state_machine = create_state_machine(|id| {
-            async move {
+        let state_machine = create_state_machine(
+            |id| async move {
                 LoadInfo {
                     current_state: TestState::Start,
                     id,
                     last_transition_id: 2,
-                    model: Model {
-                        my_id: id
-                    }
+                    model: Model { my_id: id },
                 }
-            }
-        }, &mut vec![
-            Box::new(StartState{}),
-            Box::new(MiddleState{}),
-            Box::new(EndState{}),
-        ], 1024, Handle::current());
+            },
+            &mut vec![
+                Box::new(StartState {}),
+                Box::new(MiddleState {}),
+                Box::new(EndState {}),
+            ],
+            1024,
+            Handle::current(),
+        );
         let result = state_machine.send(1, TestEvt::Middle).await.unwrap();
         match result {
             StateMachineResult::ChangedState(state) => {
                 assert_eq!(TestState::Middle, state);
-            },
+            }
             _ => {
                 assert!(false);
             }
         }
+        let state = state_machine
+            .send(1, TestEvt::GetCurrentState)
+            .await
+            .unwrap();
+        match state {
+            StateMachineResult::Ran(r) => match &r {
+                ResultMy::State(state) => {
+                    assert_eq!(TestState::Middle, state.clone());
+                }
+                _ => {
+                    panic!("invalid result type.");
+                }
+            },
+            _ => {
+                panic!("Did not run as expected");
+            }
+        }
     }
 
-    struct StartState {
-        
-    }
+    struct StartState {}
 
     type MyState = StatePersisted<u32, TestState, Model, TestEvt, ResultMy>;
     type MyContext = Arc<ContextContainer<u32, TestState, Model, TestEvt, ResultMy>>;
@@ -631,66 +697,52 @@ mod tests {
 
     #[async_trait]
     impl StatePersisted<u32, TestState, Model, TestEvt, ResultMy> for StartState {
-
         fn state(&self) -> TestState {
             TestState::Start
         }
 
         async fn handle_event(&self, event: &TestEvt, ctx: MyContext) -> MyEventActionResult {
             match event {
-                TestEvt::Middle => {
-                    EventActionResult::GoToState{state: TestState::Middle}
-                }
-                _ => {
-                    EventActionResult::Ignore
-                }
+                TestEvt::Middle => EventActionResult::GoToState {
+                    state: TestState::Middle,
+                },
+                _ => EventActionResult::Ignore,
             }
         }
 
         async fn entry(&self, evt: &TestEvt, ctx: MyContext) {
-            
+            ctx.add_message(TestEvt::Message("Hi".to_owned()), None);
         }
 
         async fn exit(&self, evt: &TestEvt, ctx: MyContext) {}
     }
 
-    struct MiddleState {
-        
-    }
+    struct MiddleState {}
 
     #[async_trait]
     impl StatePersisted<u32, TestState, Model, TestEvt, ResultMy> for MiddleState {
-
         fn state(&self) -> TestState {
             TestState::Middle
         }
 
         async fn handle_event(&self, event: &TestEvt, ctx: MyContext) -> MyEventActionResult {
             match event {
-                TestEvt::GetCurrentState => {
-                    EventActionResult::DidAction{
-                        result: ResultMy::State(ctx.state().clone())
-                    }
-                }
-                _ => {
-                    EventActionResult::Ignore
-                }
+                TestEvt::GetCurrentState => EventActionResult::DidAction {
+                    result: ResultMy::State(ctx.state().clone()),
+                },
+                _ => EventActionResult::Ignore,
             }
         }
 
-        async fn entry(&self, evt: &TestEvt, ctx: MyContext) {
-        }
+        async fn entry(&self, evt: &TestEvt, ctx: MyContext) {}
 
         async fn exit(&self, evt: &TestEvt, ctx: MyContext) {}
     }
 
-    struct EndState {
-        
-    }
+    struct EndState {}
 
     #[async_trait]
     impl StatePersisted<u32, TestState, Model, TestEvt, ResultMy> for EndState {
-
         fn state(&self) -> TestState {
             TestState::End
         }
@@ -699,9 +751,7 @@ mod tests {
             EventActionResult::Ignore
         }
 
-        async fn entry(&self, evt: &TestEvt, ctx: MyContext) {
-            
-        }
+        async fn entry(&self, evt: &TestEvt, ctx: MyContext) {}
 
         async fn exit(&self, evt: &TestEvt, ctx: MyContext) {}
     }
