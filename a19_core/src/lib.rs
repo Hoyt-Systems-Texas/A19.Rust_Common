@@ -1,4 +1,5 @@
 use rand::{thread_rng, RngCore};
+use std::time::SystemTime;
 
 pub mod js;
 pub mod pow2;
@@ -12,10 +13,18 @@ pub fn next_u128_rand() -> u128 {
     first | last << 64
 }
 
+/// Used to get the current time in seconds.
+pub fn current_time_secs() -> u64 {
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => n.as_secs(),
+        Err(_) => 0
+    }
+}
+
 #[cfg(test)]
 mod test {
 
-    use crate::next_u128_rand;
+    use crate::{next_u128_rand, current_time_secs };
     use std::u128;
     use std::u64;
 
@@ -26,5 +35,11 @@ mod test {
         let max_u128 = u128::MAX >> 2;
         assert!(val > max_u64);
         assert!(val > max_u128);
+    }
+
+    #[test]
+    pub fn current_time_secs_test() {
+        let time = current_time_secs();
+        assert!(time > 10000)
     }
 }
