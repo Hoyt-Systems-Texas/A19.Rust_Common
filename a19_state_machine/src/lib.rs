@@ -1,5 +1,7 @@
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use a19_concurrent::queue::skip_queue::{create_skip_queue, SkipQueueReader};
+use a19_concurrent::timeout::consistent::TimeoutFixed;
+use a19_core::current_time_secs;
 use async_trait::async_trait;
 use core::pin::Pin;
 use futures::channel::oneshot::{self, channel};
@@ -229,6 +231,10 @@ impl<KEY: Hash + Eq, STATE: Hash + Eq + Send + Clone, MODEL: Send, MSG: Send, RE
     }
 }
 
+fn timeout_ctx() -> u64 {
+    current_time_secs() + 3000
+}
+
 /// Used to create a state machine.  Currently for the main loop uses the single writer principal.
 /// Would require finding a high speed hashmap to not do it this way.
 pub fn create_state_machine<
@@ -265,6 +271,7 @@ where
     let main_queue_writer = writer.clone();
     let join_handle = thread::spawn(move || {
         let context_store = HashMap::with_capacity(100);
+        let mut timeout = TimeoutFixed::<KEY>::with_capacity(5000);
         let mut receiver = StateMachineReceiver::<KEY, STATE, MODEL, MSG, RESULT, F, FT> {
             context_store,
             load: Arc::new(load_func),
@@ -343,6 +350,7 @@ where
                                             model.id.clone(),
                                             ContextOption::Loaded(new_context.clone()),
                                         );
+                                        timeout.add(new_context.id().clone(), timeout_ctx(), new_context.version());
                                         // Process any pending messages.
                                         let states = receiver.state_store.clone();
                                         runtime.spawn(async move {
@@ -357,6 +365,29 @@ where
                         }
                     }
                 } else {
+                    let current_time = current_time_secs();
+                    // Going to do the cleanup in the main thread to prevent having to handle complex race conditions and needing a concurrent hashmap.
+                    loop {
+                        if let Some(top) = timeout.pop_expired(&current_time) {
+                            if let Some(ctx) = receiver.context_store.get(&top.key) {
+                                match ctx {
+                                    ContextOption::Loaded(ctx) => {
+                                        if ctx.version() == top.version && ctx.version() % 2 == 0 {
+                                            receiver.context_store.remove(&top.key);
+                                        } else {
+                                            timeout.add(top.key.clone(), timeout_ctx(), ctx.version());
+                                        }
+                                    }
+                                    _ => {
+                                        // Just remove it.  Something went wrong and we should just delete it.
+                                        receiver.context_store.remove(&top.key);
+                                    }
+                                }
+                            }
+                        } else {
+                            break
+                        }
+                    }
                     thread::sleep(wait_time);
                 }
             }
