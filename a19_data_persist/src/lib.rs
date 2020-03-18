@@ -1,23 +1,12 @@
 pub mod file;
 pub mod raft;
 
-use futures::{Canceled, Future, Oneshot, Poll};
+use futures::{Future};
+use futures::channel::oneshot::{self};
 
 /// Represents the committing of data as a future.  Since this will be distributed at some point we
 /// want to be able to batch events.
-pub struct CommitFuture<TOut> {
-    /// The oneshot used to commit the future.
-    oneshot: Oneshot<TOut>,
-}
-
-impl<TOut> Future for CommitFuture<TOut> {
-    type Item = TOut;
-    type Error = Canceled;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.oneshot.poll()
-    }
-}
+type CommitFuture<TOUT> = oneshot::Sender<TOUT>;
 
 /// Used to presist an event stream to a persited store like disk.  Need to also decided how we are
 /// going to stream the events.

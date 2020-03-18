@@ -34,44 +34,24 @@ use a19_concurrent::buffer::ring_buffer::{
 use a19_concurrent::buffer::{align, DirectByteBuffer};
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
-use futures::{oneshot, Async, Canceled, Complete, Future, Oneshot, Poll};
+use futures::channel::oneshot;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fs::*;
 use std::io;
-use std::io::prelude::*;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, AtomicU8};
 use std::sync::{atomic, Arc, Mutex};
 use std::thread;
-use std::thread::{spawn, JoinHandle};
+use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
 #[path = "../target/a19_data_persist/message/persisted_file_generated.rs"]
 
-/// Represents a future from a queue that is processed async.
-pub struct QueueFuture<TOut> {
-    oneshot: Oneshot<TOut>,
-}
-
-impl<TOut> QueueFuture<TOut> {
-    pub fn new() -> (Self, Complete<TOut>) {
-        let (c, p) = oneshot::<TOut>();
-        (QueueFuture { oneshot: p }, c)
-    }
-}
-
-impl<TOut> Future for QueueFuture<TOut> {
-    type Item = TOut;
-    type Error = Canceled;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.oneshot.poll()
-    }
-}
+type QueueFuture<TOUT> = oneshot::Receiver<TOUT>;
 
 /// Represents a message that was read in.
 pub struct MessageInfo<'a> {
@@ -898,17 +878,17 @@ struct FileStorageInfo {
 
 struct AddMessageWriteRs {
     position_start: usize,
-    complete: Complete<file::Result<()>>,
+    complete: oneshot::Sender<file::Result<()>>,
 }
 
 struct AddMessageCommit {
     file_pos: usize,
     file_id: u32,
-    complete: Complete<file::Result<()>>,
+    complete: oneshot::Sender<file::Result<()>>,
 }
 
 impl AddMessageWriteRs {
-    fn new(position_start: usize, complete: Complete<file::Result<()>>) -> Self {
+    fn new(position_start: usize, complete: oneshot::Sender<file::Result<()>>) -> Self {
         AddMessageWriteRs {
             position_start,
             complete,
@@ -918,7 +898,7 @@ impl AddMessageWriteRs {
 
 impl AddMessageCommit {
     #[inline]
-    fn new(file_pos: usize, file_id: u32, complete: Complete<file::Result<()>>) -> Self {
+    fn new(file_pos: usize, file_id: u32, complete: oneshot::Sender<file::Result<()>>) -> Self {
         AddMessageCommit {
             file_pos,
             file_id,
@@ -1765,8 +1745,7 @@ fn commit_thread_single(
         if last_term != max_commit_term || new_term.file_id != commit_term.file_id {
             panic!("Terms must match.  This node must have run in cluster node.")
         } else {
-            let mut write_pos = 0;
-            let mut current_term = max_commit_term;
+            let current_term = max_commit_term;
             let (message_file, read_pos, read_file_id) = if current_term == 0 {
                 // New file so we don't need to do much.
                 let path = create_event_name(&file_storage_directory, &file_prefix, &1);
@@ -1934,7 +1913,7 @@ where
         println!("Starting up reading thread!");
         let mut message_processor = message_processor;
         let mut read_file_id = 1;
-        let mut read_file_path =
+        let read_file_path =
             create_event_name(&file_storage_directory, &file_prefix, &read_file_id);
         let mut read = unsafe { MessageFileStore::open_readonly(&read_file_path).unwrap() };
         let mut read_pos = 0;
@@ -2135,18 +2114,18 @@ impl PersistedMessageFile {
     /// # Returns
     /// The future that gets completed.
     pub fn write(&self, msg_type_id: i32, bytes: &[u8]) -> QueueFuture<file::Result<()>> {
-        let (queue_future, complete_on) = QueueFuture::new();
+        let (sender, receiver) = oneshot::channel();
         match self.incoming_writer.write(msg_type_id, bytes) {
             Some(p) => {
-                let add_message = AddMessageWriteRs::new(p, complete_on);
+                let add_message = AddMessageWriteRs::new(p, sender);
                 if !self.incoming_queue_writer.offer(add_message) {
                     thread::sleep_ms(2);
                 }
-                queue_future
+                receiver
             }
             None => {
-                complete_on.send(Err(file::Error::Full));
-                queue_future
+                sender.send(Err(file::Error::Full));
+                receiver
             }
         }
     }
@@ -2260,8 +2239,8 @@ mod tests {
         assert_eq!(false, r);
     }
 
-    #[test]
-    pub fn create_single_node_processor() {
+    #[tokio::test]
+    pub async fn create_single_node_processor() {
         let file_storage_directory = format!("{}_single_node", TEST_DIR);
         let path = Path::new(&file_storage_directory);
         if path.exists() && path.is_dir() {
@@ -2278,7 +2257,7 @@ mod tests {
             &0x40,
         );
         let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
-        let r = single_node.write(1, &bytes[0..8]).wait();
+        let r = single_node.write(1, &bytes[0..8]).await;
         r.unwrap();
         single_node.stop();
     }
