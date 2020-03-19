@@ -51,7 +51,7 @@ use std::vec::Vec;
 
 #[path = "../target/a19_data_persist/message/persisted_file_generated.rs"]
 
-type QueueFuture<TOUT> = oneshot::Receiver<TOUT>;
+pub type QueueFuture<TOUT> = oneshot::Receiver<TOUT>;
 
 /// Represents a message that was read in.
 pub struct MessageInfo<'a> {
