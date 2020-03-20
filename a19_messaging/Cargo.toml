@@ -1,5 +1,5 @@
 [package]
-name = "a19_state_machine"
+name = "a19_messaging"
 version = "0.1.0"
 authors = ["mrh0057 <mrhoyt4@gmail.com>"]
 edition = "2018"
@@ -8,8 +8,4 @@ edition = "2018"
 
 [dependencies]
 a19_core = { path = "../a19_core" }
-a19_concurrent = { path = "../a19_concurrent" }
-tokio = { version = "0.2", features = ["full"]}
-futures = "0.3"
-async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }

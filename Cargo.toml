@@ -7,4 +7,7 @@ members = [
     "a19_concurrent",
     "a19_data_persist",
     "a19_state_machine",
+    "a19_messaging",
+    "a19_messaging_server",
+    "a19_messaging_client",
 ]
