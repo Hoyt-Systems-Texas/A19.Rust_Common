@@ -20,10 +20,10 @@
 pub mod network;
 pub mod state_machine;
 
-const EVENT_FILE_POSTFIX: &str = "events";
-const COMMIT_FILE_POSTIX: &str = "commit";
-const HEADER_SIZE_BYTES: u64 = 128;
-const HEADER_SIZE_BITS: u64 = 128 * 8;
+pub const EVENT_FILE_POSTFIX: &str = "events";
+pub const COMMIT_FILE_POSTIX: &str = "commit";
+pub const HEADER_SIZE_BYTES: u64 = 128;
+pub const HEADER_SIZE_BITS: u64 = 128 * 8;
 
 use crate::file;
 use crate::file::{MessageFileStore, MessageFileStoreRead, MessageFileStoreWrite, MessageRead};
@@ -355,7 +355,7 @@ impl CommitFile for MemoryMappedInt {
 }
 
 /// A term committed in the raft protocol.
-struct TermCommit {
+pub struct TermCommit {
     /// The raft term id.
     term_id: u64,
     /// The current version of the message.
@@ -1090,7 +1090,7 @@ impl PartialEq for CommitFileInfo {
 }
 
 /// The commit file collection.
-struct FileCollection {
+pub struct FileCollection {
     /// The list of files containing the commit information.
     commit_files: Arc<Mutex<Vec<CommitFileInfo>>>,
     /// A map of the message files.
@@ -1346,7 +1346,7 @@ impl FileCollection {
     }
 }
 
-fn create_event_name(file_storage_directory: &str, file_prefix: &str, file_id: &u32) -> String {
+pub fn create_event_name(file_storage_directory: &str, file_prefix: &str, file_id: &u32) -> String {
     let path = Path::new(file_storage_directory);
     if !path.exists() {
         create_dir_all(path).unwrap();
@@ -1358,7 +1358,7 @@ fn create_event_name(file_storage_directory: &str, file_prefix: &str, file_id: &
 }
 
 /// Used to create the commit file name.
-fn create_commit_name(file_storage_directory: &str, file_prefix: &str, file_id: &u32) -> String {
+pub fn create_commit_name(file_storage_directory: &str, file_prefix: &str, file_id: &u32) -> String {
     format!(
         "{}{}{}.{}.{}",
         file_storage_directory, MAIN_SEPARATOR, file_prefix, COMMIT_FILE_POSTIX, file_id
@@ -1450,7 +1450,7 @@ fn load_current_files(
     }
 }
 
-enum LastCommitPos {
+pub enum LastCommitPos {
     NoCommits,
     LastCommit {
         start_term_id: u64,
@@ -1464,7 +1464,7 @@ enum LastCommitPos {
 /// Used to find the position and the file of the last commit.
 /// # Arguments
 /// `commit_files` - The commit files.
-fn find_last_commit_pos(commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
+pub fn find_last_commit_pos(commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
     let commit_files = commit_files.lock().unwrap();
     let length = commit_files.len();
     if length == 0 {
