@@ -36,7 +36,7 @@ enum RaftState {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum RaftEvent {
     VoteTimeout,
     LeaderTimeout,
@@ -112,9 +112,10 @@ struct RaftStateMachine {
 
 /// The state machine client use to communicate with the raft state machine.
 pub struct RaftStateMachineClient {
+    server_id: u32,
     internal_message_id: AtomicU64,
     buffer_reader: ManyToOneBufferWriter,
-    state_machine_thread: JoinHandle<u32>,
+    state_machine_thread: Option<JoinHandle<u32>>,
     client_message_writer: ManyToOneBufferWriter,
     state_message_queue: Arc<MpscQueueWrap<RaftEvent>>,
     max_message_id: Arc<AtomicU64>,
@@ -122,9 +123,29 @@ pub struct RaftStateMachineClient {
 
 impl RaftStateMachineClient {
 
+    /// Gets the id of the server.
+    pub fn server_id(&self) -> &u32 {
+        &self.server_id
+    }
+
     /// Used to get the max message id.
     pub fn max_message_id(&self) -> Arc<AtomicU64> {
         self.max_message_id.clone()
+    }
+
+    /// Send an event to the state machine.
+    /// # Arguments
+    /// `event` - The event to be processed by the state machine.
+    pub fn send_event(&self, event: RaftEvent) -> bool {
+        self.state_message_queue.offer(event)
+    }
+
+    /// Stops the state machine.
+    pub fn stop(&mut self) {
+        if let Some(join) = self.state_machine_thread.take() {
+            self.state_message_queue.offer(RaftEvent::Stop);
+            join.join().unwrap();
+        }
     }
 }
 

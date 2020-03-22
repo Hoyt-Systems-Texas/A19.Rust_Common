@@ -141,17 +141,31 @@
 //!
 //! ```
 use std::time::Duration;
+use a19_concurrent::buffer::align;
+use a19_concurrent::buffer::ring_buffer::{ManyToOneBufferReader, ManyToOneBufferWriter, create_many_to_one};
+use crate::raft::state_machine::{ RaftEvent, RaftStateMachineClient };
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// An event to send information over the connection.  These are messages sent on pub/sub.
+#[derive(Debug, Deserialize, Serialize)]
+pub enum NetworkSendBroadcast {
+    RaftEvent(RaftEvent),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum NetworkRq {
+    
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum NetworkRs {
+    
+}
 
 /// Represents a socket to send data to.
 struct SendSocket {
-    /// The id of the server we are sending data to.
-    server_id: u32,
-    /// The current term we are reading from the server.
-    current_term_id: u32,
-    /// The current size of the receive window.
-    receive_window: u32,
-    /// The maximum size we are able to transfer.
-    mtu: u32,
+    state_machine_client: Arc<RaftStateMachineClient>,
 }
 
 struct Connection {
