@@ -1,6 +1,7 @@
 use crate::file;
 use crate::raft::*;
 use crate::raft::{CommitFile, TermFile};
+use crate::raft::network::NetworkSendType;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
@@ -8,6 +9,7 @@ use a19_concurrent::buffer::ring_buffer::{
 use a19_concurrent::buffer::{align, DirectByteBuffer};
 use a19_concurrent::queue::mpsc_queue::MpscQueueWrap;
 use a19_concurrent::queue::skip_queue::SkipQueueReader;
+use a19_concurrent::queue::spsc_queue::SpscQueueSendWrap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::*;
@@ -121,7 +123,7 @@ struct RaftStateMachine {
     pending_write_queue: ManyToOneBufferWriter,
     server_count: u32,
     leader: u32,
-    state_message_queue_writer: Arc<MpscQueueWrap<RaftEvent>>,
+    state_message_queue_writer: SpscQueueSendWrap<NetworkSendType>,
     max_message_id: Arc<AtomicU64>,
 }
 

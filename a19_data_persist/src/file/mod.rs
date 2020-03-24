@@ -48,6 +48,18 @@ impl MessageFileStoreRead {
         let store = unsafe { &mut *self.store.get() };
         store.read_block(pos, max_message_id, max_length)
     }
+
+    /// Reads in a raw block.  Useful if you are copying data in the buffer.
+    /// # Arguments
+    /// `pos` - The starting position.
+    /// `length` - The length of the section to get.
+    pub fn read_section<'a>(
+        &'a self,
+        pos: &usize,
+        length: &usize) -> Result<&'a [u8]> {
+        let store = unsafe { &mut *self.store.get() };
+        store.read_section(pos, length)
+    }
 }
 
 unsafe impl Sync for MessageFileStoreRead {}
@@ -282,6 +294,9 @@ pub trait MessageStore {
         message_id: &u64,
         buffer: &[u8],
     ) -> Result<usize>;
+
+    /// Used to read in a section.
+    fn read_section<'a>(&'a self, pos: &usize, length: &usize) -> Result<&'a [u8]>;
 }
 
 impl MessageFileStore {
@@ -433,6 +448,17 @@ impl MessageStore for MessageFileStore {
                     Ok(aligned + pos)
                 }
             }
+        }
+    }
+
+    fn read_section<'a>(&'a self, pos: &usize, length: &usize) -> Result<&'a [u8]> {
+        fence(Ordering::Acquire);
+        if *pos > self.size() - ALIGNMENT {
+            Err(Error::PositionOutOfRange(*pos))
+        } else if *pos + *length > self.size() {
+            Err(Error::PositionOutOfRange(*pos))
+        } else {
+            Ok(self.buffer.get_bytes(pos, length))
         }
     }
 
