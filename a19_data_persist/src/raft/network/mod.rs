@@ -411,6 +411,10 @@ impl RaftEventEncoder {
         self.msg_buffer[STOP_SERVER..].clone_from_slice(&self.zero_buffer);
     }
 
+    fn write_type(&mut self, type_id: i16) {
+        BigEndian::write_i16(&mut self.msg_buffer[POS_TYPE..STOP_type], type_id);
+    }
+
     /// Writes the raft event to the buffer.  If the event isn't suppose to be sent over the wire false is returned.
     /// # Arguments
     /// `raft_event` - The raft event to serialize.
@@ -424,15 +428,18 @@ impl RaftEventEncoder {
             RaftEvent::Commited{term_id} => {
                 self.zero_body();
                 BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], term_id);
+                self.write_type(COMMITED);
                 true
             }
             RaftEvent::ElectedLeader{server_id} => {
                 self.zero_body();
+                self.write_type(ELECTED_LEADER);
                 true
             }
             RaftEvent::FollowerIndex{server_id, term_id} => {
                 self.zero_body();
                 BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], term_id);
+                self.write_type(FOLLOWER_INDEX);
                 true
             }
             RaftEvent::LeaderTimeout => {
@@ -444,11 +451,13 @@ impl RaftEventEncoder {
             RaftEvent::Ping{max_commited_term, server_id} => {
                 self.zero_body();
                 BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_commited_term);
+                self.write_type(PING);
                 true
             }
             RaftEvent::Pong{max_term_id, server_id} => {
                 self.zero_body();
                 BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_term_id);
+                self.write_type(PONG);
                 true
             }
             RaftEvent::ProcessInternalMessage{msg} => {
@@ -460,11 +469,13 @@ impl RaftEventEncoder {
             RaftEvent::VoteForCandiate{server_id} => {
                 self.zero_body();
                 BigEndian::write_u32(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 4)], server_id);
+                self.write_type(VOTE_FOR_CANDIATE);
                 true
             }
             RaftEvent::VoteForMe{ max_term_id, server_id} => {
                 self.zero_body();
                 BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_term_id);
+                self.write_type(VOTE_FOR_ME);
                 true
             }
             RaftEvent::VoteTimeout => {
@@ -477,4 +488,8 @@ impl RaftEventEncoder {
 /// Used to encode the raft data frame to send it to the receivers.
 struct RaftDataFrame {
     msg_buffer: [u8; MAX_DATA_FRAME_SIZE],
+}
+
+impl RaftDataFrame {
+    
 }
