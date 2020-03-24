@@ -1039,7 +1039,7 @@ impl PartialEq for MessageFileInfo {
 }
 
 #[derive(Eq, Debug, Clone)]
-struct CommitFileInfo {
+pub(crate) struct CommitFileInfo {
     path: String,
     file_id: u32,
     term_start: u64,
@@ -1358,7 +1358,11 @@ pub fn create_event_name(file_storage_directory: &str, file_prefix: &str, file_i
 }
 
 /// Used to create the commit file name.
-pub fn create_commit_name(file_storage_directory: &str, file_prefix: &str, file_id: &u32) -> String {
+pub fn create_commit_name(
+    file_storage_directory: &str,
+    file_prefix: &str,
+    file_id: &u32,
+) -> String {
     format!(
         "{}{}{}.{}.{}",
         file_storage_directory, MAIN_SEPARATOR, file_prefix, COMMIT_FILE_POSTIX, file_id
@@ -1450,7 +1454,7 @@ fn load_current_files(
     }
 }
 
-pub enum LastCommitPos {
+pub(crate) enum LastCommitPos {
     NoCommits,
     LastCommit {
         start_term_id: u64,
@@ -1464,7 +1468,9 @@ pub enum LastCommitPos {
 /// Used to find the position and the file of the last commit.
 /// # Arguments
 /// `commit_files` - The commit files.
-pub fn find_last_commit_pos(commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastCommitPos {
+pub(crate) fn find_last_commit_pos(
+    commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>,
+) -> LastCommitPos {
     let commit_files = commit_files.lock().unwrap();
     let length = commit_files.len();
     if length == 0 {
