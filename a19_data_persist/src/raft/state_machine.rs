@@ -399,6 +399,21 @@ impl RaftStateMachine {
                 match event {
                     RaftEvent::VoteForCandiate { server_id } => {
                         votes.insert(server_id);
+                        if votes.len() >= self.votes_required as usize {
+                            self.current_state = RaftState::Leader {
+                                next_index: HashMap::with_capacity(10),
+                                match_index: HashMap::with_capacity(10),
+                            };
+                            // We won let the others know.
+                            self.state_message_queue_writer.offer(
+                                NetworkSendType::Broadcast {
+                                    msg: NetworkSend::RaftEvent(
+                                        RaftEvent::ElectedLeader{
+                                        server_id: self.server_id
+                                        }
+                                    )
+                                });
+                        }
                         // Check to see if we have enough votes.
                     }
                     RaftEvent::VoteForMe {
@@ -422,6 +437,7 @@ impl RaftStateMachine {
                     RaftEvent::VoteTimeout => {
                         self.voted_for = None;
                         votes.clear();
+                        votes.insert(self.server_id);
                         self.send_leader_request();
                     }
                     RaftEvent::ProcessInternalMessage { msg } => {
@@ -449,10 +465,10 @@ impl RaftStateMachine {
                     }
                     RaftEvent::LeaderTimeout => {
                         // try to become leader.
+                        let mut votes = HashSet::with_capacity(self.server_count as usize);
+                        votes.insert(self.server_id);
                         self.current_state = RaftState::Candidate {
-                            votes: HashSet::with_capacity(
-                                self.server_count as usize,
-                            ),
+                            votes,
                         };
                         self.send_leader_request();
                     }
@@ -656,6 +672,89 @@ mod test {
         match state_machine.current_state {
             RaftState::Follower{leader} => {
                 assert_eq!(2, leader);
+            },
+            _ => {
+                assert!(false);
+            }
+        }
+    }
+
+    #[test]
+    fn test_leader_timeout() {
+        let (mut state_machine, mut net) = create_state_machine();
+        state_machine.process_event(
+            RaftEvent::ElectedLeader{server_id: 2}
+        );
+        state_machine.process_event(
+            RaftEvent::LeaderTimeout
+        );
+        if let Some(top) = net.net_reader.poll() {
+            match top {
+                NetworkSendType::Broadcast{msg} => {
+                    match msg {
+                        NetworkSend::RaftEvent(evt) => {
+                            match evt {
+                                RaftEvent::VoteForMe{max_term_id, server_id} => {
+                                    assert_eq!(1, server_id);
+                                }
+                                _ => {
+                                    assert!(false);
+                                }
+                            }
+                        }
+                        _ => {
+                            assert!(false);
+                        }
+                    }
+                },
+                _ => {
+                    assert!(false);
+                }
+            }
+        } else {
+            assert!(false);
+        }
+
+        match &state_machine.current_state {
+            RaftState::Candidate{votes} => {
+                
+            },
+            _ => {
+                assert!(false);
+            }
+        }
+
+        state_machine.process_event(RaftEvent::VoteForCandiate{server_id: 2});
+        if let Some(top) = net.net_reader.poll() {
+            match top {
+                NetworkSendType::Broadcast{msg} => {
+                    match msg {
+                        NetworkSend::RaftEvent(evt) => {
+                            match evt {
+                                RaftEvent::ElectedLeader{server_id} => {
+                                    assert_eq!(1, server_id);
+                                }
+                                _ => {
+                                    assert!(false);
+                                }
+                            }
+                        }
+                        _ => {
+                            assert!(false);
+                        }
+                    }
+                },
+                _ => {
+                    assert!(false);
+                }
+            }
+        } else {
+            assert!(false);
+        }
+
+        match &state_machine.current_state {
+            RaftState::Leader{match_index, next_index} => {
+                
             },
             _ => {
                 assert!(false);
