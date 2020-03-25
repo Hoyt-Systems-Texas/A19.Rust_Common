@@ -53,10 +53,7 @@ impl MessageFileStoreRead {
     /// # Arguments
     /// `pos` - The starting position.
     /// `length` - The length of the section to get.
-    pub fn read_section<'a>(
-        &'a self,
-        pos: &usize,
-        length: &usize) -> Result<&'a [u8]> {
+    pub fn read_section<'a>(&'a self, pos: &usize, length: &usize) -> Result<&'a [u8]> {
         let store = unsafe { &mut *self.store.get() };
         store.read_section(pos, length)
     }

@@ -304,18 +304,18 @@
 //! +---------------------------------------------------------------+ 256
 //! ```
 //! Request a missing term(s) from the server.
+use crate::file::MessageFileStoreRead;
 use crate::raft::state_machine::{RaftEvent, RaftStateMachineClient};
-use a19_concurrent::queue::spsc_queue::{SpscQueueSendWrap, SpscQueueReceiveWrap};
 use a19_concurrent::buffer::align;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
+use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
+use byteorder::{BigEndian, ByteOrder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use zmq::{ Message, Socket };
-use byteorder::{BigEndian, ByteOrder};
-use crate::file::MessageFileStoreRead;
+use zmq::{Message, Socket};
 
 /// The size of the header.
 const HEADER_SIZE: usize = 32;
@@ -378,6 +378,15 @@ pub(crate) struct EventLogMsg {
     length: usize,
 }
 
+/// The connection information for the different sockets.
+#[derive(Debug)]
+pub struct NetworkConnections {
+    push_socket_uri: String,
+    pull_socket_uri: String,
+    pub_socket_uri: String,
+    sub_socket_uri: String,
+}
+
 /// An event to send information over the connection.  These are messages sent on pub/sub.
 #[derive(Debug)]
 pub(crate) enum NetworkSend {
@@ -385,9 +394,9 @@ pub(crate) enum NetworkSend {
     EventLog(EventLogMsg),
 }
 
-pub(crate) enum NetworkSendType  {
-    Broadcast{msg: NetworkSend},
-    Single{server_id: u32, msg: NetworkSend},
+pub(crate) enum NetworkSendType {
+    Broadcast { msg: NetworkSend },
+    Single { server_id: u32, msg: NetworkSend },
 }
 
 /// A mechanism for sending a single message to the server.
@@ -396,6 +405,7 @@ pub(crate) enum NetworkSingleMessage {}
 
 /// Represents a socket to send data to.
 struct SendSocket {
+    network_connections: NetworkConnections,
     server_id: u32,
     push_socket: Socket,
     pub_socket: Socket,
@@ -406,7 +416,9 @@ struct SendSocket {
     file_prefix: String,
 }
 
+/// Used to manage the send sockets.
 struct ReceiveSockets {
+    network_connections: NetworkConnections,
     server_id: u32,
     pull_socket: Socket,
     sub_socket: Socket,
@@ -419,12 +431,10 @@ struct RaftEventEncoder {
     msg_buffer: [u8; HEADER_SIZE],
     zero_buffer: [u8; 20],
     server_id: u32,
-
 }
 
 /// The raft message encoder.
 impl RaftEventEncoder {
-
     fn new(server_id: u32) -> Self {
         let mut s = Self {
             msg_buffer: [0; 32],
@@ -459,65 +469,83 @@ impl RaftEventEncoder {
     /// true if the raft event should be sent over the wire.
     fn write(&mut self, raft_event: RaftEvent) -> bool {
         match raft_event {
-            RaftEvent::ClientMessageReceived => {
-                false
-            }
-            RaftEvent::Commited{term_id} => {
+            RaftEvent::ClientMessageReceived => false,
+            RaftEvent::Commited { term_id } => {
                 self.zero_body();
-                BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], term_id);
+                BigEndian::write_u64(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
+                    term_id,
+                );
                 self.write_type(COMMITED);
                 true
             }
-            RaftEvent::ElectedLeader{server_id: _} => {
+            RaftEvent::ElectedLeader { server_id: _ } => {
                 self.zero_body();
                 self.write_type(ELECTED_LEADER);
                 true
             }
-            RaftEvent::FollowerIndex{server_id: _, term_id} => {
+            RaftEvent::FollowerIndex {
+                server_id: _,
+                term_id,
+            } => {
                 self.zero_body();
-                BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], term_id);
+                BigEndian::write_u64(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
+                    term_id,
+                );
                 self.write_type(FOLLOWER_INDEX);
                 true
             }
-            RaftEvent::LeaderTimeout => {
-                false
-            }
-            RaftEvent::NoMessagesTimeout => {
-                false
-            }
-            RaftEvent::Ping{max_commited_term, server_id: _} => {
+            RaftEvent::LeaderTimeout => false,
+            RaftEvent::NoMessagesTimeout => false,
+            RaftEvent::Ping {
+                max_commited_term,
+                server_id: _,
+            } => {
                 self.zero_body();
-                BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_commited_term);
+                BigEndian::write_u64(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
+                    max_commited_term,
+                );
                 self.write_type(PING);
                 true
             }
-            RaftEvent::Pong{max_term_id, server_id: _} => {
+            RaftEvent::Pong {
+                max_term_id,
+                server_id: _,
+            } => {
                 self.zero_body();
-                BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_term_id);
+                BigEndian::write_u64(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
+                    max_term_id,
+                );
                 self.write_type(PONG);
                 true
             }
-            RaftEvent::ProcessInternalMessage{msg: _} => {
-                false
-            }
-            RaftEvent::Stop => {
-                false
-            }
-            RaftEvent::VoteForCandiate{server_id} => {
+            RaftEvent::ProcessInternalMessage { msg: _ } => false,
+            RaftEvent::Stop => false,
+            RaftEvent::VoteForCandiate { server_id } => {
                 self.zero_body();
-                BigEndian::write_u32(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 4)], server_id);
+                BigEndian::write_u32(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 4)],
+                    server_id,
+                );
                 self.write_type(VOTE_FOR_CANDIATE);
                 true
             }
-            RaftEvent::VoteForMe{ max_term_id, server_id: _} => {
+            RaftEvent::VoteForMe {
+                max_term_id,
+                server_id: _,
+            } => {
                 self.zero_body();
-                BigEndian::write_u64(&mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)], max_term_id);
+                BigEndian::write_u64(
+                    &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
+                    max_term_id,
+                );
                 self.write_type(VOTE_FOR_ME);
                 true
             }
-            RaftEvent::VoteTimeout => {
-                false
-            }
+            RaftEvent::VoteTimeout => false,
         }
     }
 }
@@ -531,22 +559,19 @@ struct RaftDataFrame {
 }
 
 impl RaftDataFrame {
-
-    fn new(
-        server_id: u32,
-        max_data_frame_size: usize) -> Self {
+    fn new(server_id: u32, max_data_frame_size: usize) -> Self {
         let mut s = Self {
             server_id,
             msg_buffer: Vec::with_capacity(max_data_frame_size + HEADER_SIZE),
             max_data_frame_size,
-            current_length: 0
+            current_length: 0,
         };
         BigEndian::write_u32(&mut s.msg_buffer[POS_SERVER..STOP_SERVER], server_id);
         s.msg_buffer[4] = CURRENT_VERSION;
         BigEndian::write_i16(&mut s.msg_buffer[POS_TYPE..STOP_type], DATA_FRAME);
         s
     }
-    
+
     /// Gets the buffer with the data to write onto the socket.
     fn buffer<'a>(&'a self) -> &'a [u8] {
         // The buffer is already 32 bit aligned so we don't need to do anything here.
@@ -561,14 +586,14 @@ impl RaftDataFrame {
     /// true if we should write it out over the wire.
     fn write(&mut self, msg: EventLogMsg, message_file_store: MessageFileStoreRead) -> bool {
         // Assume the value is already aligned.  We are reading in the raw messages.
-        let frame_size = (msg.length + HEADER_SIZE) as u32 ;
+        let frame_size = (msg.length + HEADER_SIZE) as u32;
         BigEndian::write_u32(&mut self.msg_buffer[0..4], frame_size);
         BigEndian::write_u64(&mut self.msg_buffer[12..20], msg.term_id);
         BigEndian::write_u32(&mut self.msg_buffer[20..24], msg.file_id);
         BigEndian::write_u64(&mut self.msg_buffer[24..32], msg.file_offset as u64);
-        let copy_from = message_file_store.read_section(
-            &msg.file_offset,
-            &msg.length).unwrap(); // Potential data corruption bug crash!
+        let copy_from = message_file_store
+            .read_section(&msg.file_offset, &msg.length)
+            .unwrap(); // Potential data corruption bug crash!
         let copy_to = &mut self.msg_buffer[32..msg.length];
         copy_to.clone_from_slice(copy_from);
         true

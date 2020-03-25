@@ -22,8 +22,9 @@ pub mod state_machine;
 
 pub const EVENT_FILE_POSTFIX: &str = "events";
 pub const COMMIT_FILE_POSTIX: &str = "commit";
-pub const HEADER_SIZE_BYTES: u64 = 128;
-pub const HEADER_SIZE_BITS: u64 = 128 * 8;
+pub const COMMIT_SIZE: u64 = 128;
+pub const COMMIT_SIZE_BITS: usize = 128 * 8;
+pub const EVENT_HEADER_SIZE: usize = 32;
 
 use crate::file;
 use crate::file::{MessageFileStore, MessageFileStoreRead, MessageFileStoreWrite, MessageRead};
@@ -778,7 +779,7 @@ impl TermFile {
         TermFile {
             buffer,
             term_start,
-            term_end: c / HEADER_SIZE_BYTES,
+            term_end: c / COMMIT_SIZE,
             file_id,
         }
     }
@@ -795,7 +796,7 @@ impl TermFile {
             TermPosResult::Overflow
         } else {
             let offset = *term_id - self.term_start;
-            TermPosResult::Pos((offset * HEADER_SIZE_BYTES) as usize)
+            TermPosResult::Pos((offset * COMMIT_SIZE) as usize)
         }
     }
 }
@@ -1500,7 +1501,7 @@ pub(crate) fn find_last_commit_pos(
                         last_term = term;
                         found_commit = true;
                         last_max_message = buffer.max_message_id(&pos);
-                        pos += HEADER_SIZE_BYTES as usize;
+                        pos += COMMIT_SIZE as usize;
                     } else {
                         break;
                     }
@@ -1564,7 +1565,7 @@ fn find_last_term(commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastTermPos
                     if buffer.term(&pos) > 0 {
                         last_term = term;
                         found_commit = true;
-                        pos += HEADER_SIZE_BYTES as usize;
+                        pos += COMMIT_SIZE as usize;
                     } else {
                         break;
                     }
@@ -1699,7 +1700,7 @@ fn commit_thread_single(
                 let map = unsafe {
                     MemoryMappedInt::new(
                         &file_name,
-                        align(commit_file_size, HEADER_SIZE_BYTES as usize),
+                        align(commit_file_size, COMMIT_SIZE as usize),
                     )
                     .unwrap()
                 };
@@ -2102,6 +2103,19 @@ where
         file_storage_directory: file_storage_directory.clone(),
         file_prefix: file_prefix.clone(),
     }
+}
+
+/// Crates a new term file.
+pub(crate) fn create_term_file(
+    file_storage_directory: &str,
+    file_prefix: &str,
+    file_id: u32,
+    term_start: u64,
+    file_size: usize,
+) -> TermFile {
+    let path = create_commit_name(file_storage_directory, file_prefix, &file_id);
+    let buffer = unsafe {MemoryMappedInt::new(&path, file_size)}.unwrap();
+    TermFile::new(buffer, term_start, file_id)
 }
 
 impl PersistedMessageFile {

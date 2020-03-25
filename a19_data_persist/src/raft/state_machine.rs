@@ -1,7 +1,7 @@
 use crate::file;
 use crate::raft::*;
 use crate::raft::{CommitFile, TermFile};
-use crate::raft::network::NetworkSendType;
+use crate::raft::network::{ NetworkSendType, NetworkSend };
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
@@ -108,23 +108,29 @@ struct WriteFileInfo {
     pending_write_queue: ManyToOneBufferReader,
 }
 
-struct RaftStateMachine {
+pub(crate) struct RaftStateMachine {
     server_id: u32,
     current_state: RaftState,
+    /// The current term we have written
     current_term_id: u64,
     last_appended_term_id: u64,
     voted_for: Option<u32>,
     connected_server: HashMap<u32, ConnectedServer>,
-    leader_votes: HashSet<u32, u32>,
+    leader_votes: HashSet<u32>,
     message_queue: SkipQueueReader<RaftEvent>,
     commit_term_file: TermFile,
     new_term_file: TermFile,
     commit_file_size: usize,
-    pending_write_queue: ManyToOneBufferWriter,
+    //pending_write_queue: ManyToOneBufferWriter,
     server_count: u32,
     leader: u32,
     state_message_queue_writer: SpscQueueSendWrap<NetworkSendType>,
     max_message_id: Arc<AtomicU64>,
+    /// The current max committed term.
+    current_commited_term: u64,
+    votes_required: u32,
+    file_storage_directory: String,
+    file_prefix: String,
 }
 
 /// The state machine client use to communicate with the raft state machine.
@@ -193,7 +199,7 @@ fn create_state_machine(
             let map = unsafe {
                 MemoryMappedInt::new(
                     &file_name,
-                    align(commit_file_size, HEADER_SIZE_BYTES as usize),
+                    align(commit_file_size, COMMIT_SIZE as usize),
                 )
                 .unwrap()
             };
@@ -275,155 +281,13 @@ fn create_state_machine(
     }
 }
 
+/// Kicks off the thread to process the state machine events.
 fn run_state_machine(state_machine: RaftStateMachine) -> JoinHandle<u32> {
     thread::spawn(move || {
         let mut state_machine = state_machine;
         loop {
             if let Some(msg) = state_machine.message_queue.poll() {
-                match &mut state_machine.current_state {
-                    RaftState::Candidate { votes } => {
-                        match msg {
-                            RaftEvent::VoteForCandiate { server_id } => {
-                                votes.insert(server_id);
-                                // Check to see if we have enough votes.
-                            }
-                            RaftEvent::VoteForMe {
-                                server_id,
-                                max_term_id,
-                            } => {
-                                if state_machine.current_term_id <= max_term_id {
-                                    // Vote for Candidate.
-                                }
-                            }
-                            RaftEvent::ClientMessageReceived => {
-                                state_machine.message_queue.skip(msg);
-                            }
-                            RaftEvent::ElectedLeader { server_id } => {
-                                if server_id == state_machine.server_id {}
-                            }
-                            RaftEvent::VoteTimeout => {
-                                votes.clear();
-                                state_machine.send_leader_request();
-                            }
-                            RaftEvent::ProcessInternalMessage { msg } => {
-                                // This should never happen since we can't commit while a candidate!
-                            }
-                            _ => {
-                                // Ignore the rest of the events.
-                            }
-                        }
-                    }
-                    RaftState::Follower { leader } => {
-                        match msg {
-                            RaftEvent::ClientMessageReceived => {
-                                // Forward to the server.
-                            }
-                            RaftEvent::FollowerIndex { server_id, term_id } => {
-                                // Ignore
-                            }
-                            RaftEvent::Commited { term_id } => {}
-                            RaftEvent::ElectedLeader { server_id } => {
-                                state_machine.leader = server_id;
-                            }
-                            RaftEvent::LeaderTimeout => {
-                                // try to become leader.
-                                state_machine.current_state = RaftState::Candidate {
-                                    votes: HashSet::with_capacity(
-                                        state_machine.server_count as usize,
-                                    ),
-                                };
-                                state_machine.send_leader_request();
-                            }
-                            RaftEvent::Stop => {}
-                            RaftEvent::VoteForCandiate { server_id } => {
-                                // We should get this see we are following someone :(
-                            }
-                            RaftEvent::VoteForMe {
-                                server_id,
-                                max_term_id,
-                            } => {
-                                if state_machine.current_term_id <= max_term_id {
-                                    // Vote for this candidate if we haven't already voted.  Need to figure out how to keep track of this.
-                                }
-                            }
-                            RaftEvent::Pong {
-                                server_id,
-                                max_term_id,
-                            } => {
-                                if *leader == server_id {
-                                    // Have the new max_term_id and need to send back a ping.
-                                }
-                            }
-                            RaftEvent::Ping { max_commited_term, server_id } => {
-                                // We shouldn't get this since we are the leader
-                            }
-                            RaftEvent::NoMessagesTimeout => {
-                                // Do nothing since this should be a leader timeout.
-                            }
-                            RaftEvent::VoteTimeout => {
-                                // Ignore
-                            }
-                            RaftEvent::ProcessInternalMessage { msg } => {
-                                state_machine.handle_internal_message(msg);
-                            }
-                        }
-                    }
-                    RaftState::Leader {
-                        next_index,
-                        match_index,
-                    } => {
-                        match msg {
-                            RaftEvent::ClientMessageReceived => {
-                                // Go a new possible term.
-                            }
-                            RaftEvent::FollowerIndex { server_id, term_id } => {
-                                next_index.insert(server_id, term_id + 1);
-                            }
-                            RaftEvent::Commited { term_id } => {
-                                // Would be an error since we are sending these :(
-                            }
-                            RaftEvent::ElectedLeader { server_id } => {
-                                if state_machine.server_id != server_id {
-                                    state_machine.current_state =
-                                        RaftState::Follower { leader: server_id };
-                                }
-                            }
-                            RaftEvent::LeaderTimeout => {
-                                // We are the leader so this shouldn't ever happen.
-                            }
-                            RaftEvent::Stop => break,
-                            RaftEvent::VoteForMe {
-                                server_id,
-                                max_term_id,
-                            } => {
-                                state_machine.handle_vote_for_me(server_id, max_term_id);
-                            }
-                            RaftEvent::VoteForCandiate { server_id } => {
-                                // Ignore invalid event.
-                            }
-                            RaftEvent::Pong {
-                                server_id,
-                                max_term_id,
-                            } => {
-                                match_index.insert(server_id, max_term_id);
-                            }
-                            RaftEvent::Ping { max_commited_term, server_id } => {
-                                // Ignore we are the leader and shouldn't be getting a pong.
-                            }
-                            RaftEvent::NoMessagesTimeout => {
-                                // Send ping to the followers.
-                                state_machine.send_ping();
-                            }
-                            RaftEvent::VoteTimeout => {
-                                // Ignore we are the leader so this shouldn't happen.
-                            }
-                            RaftEvent::ProcessInternalMessage { msg } => {
-                                // Process the internal message.
-                                state_machine.handle_internal_message(msg);
-                            }
-                        }
-                    }
-                }
+                state_machine.process_event(msg);
             } else {
                 // TODO pause for a little bit.
             }
@@ -433,7 +297,19 @@ fn run_state_machine(state_machine: RaftStateMachine) -> JoinHandle<u32> {
 }
 
 impl RaftStateMachine {
-    fn send_leader_request(&mut self) {}
+
+    fn send_leader_request(&mut self) {
+        self.state_message_queue_writer.offer(
+            NetworkSendType::Broadcast{
+                msg: NetworkSend::RaftEvent(
+                    RaftEvent::VoteForMe{
+                        server_id: self.server_id,
+                        max_term_id: self.current_commited_term
+                    }
+                )
+            }
+        );
+    }
 
     fn handle_internal_message(&mut self, msg: InternalMessage) {
         match msg {
@@ -447,7 +323,347 @@ impl RaftStateMachine {
         }
     }
 
-    fn handle_vote_for_me(&mut self, server_id: u32, max_term_id: u64) {}
+    /// Handles the request for vote for me.
+    /// # Arguments
+    /// `server_id` - The id of the server to vote for.
+    /// `max_term_id` - The max term of the id.
+    fn handle_vote_for_me(&mut self, server_id: u32, max_term_id: u64) {
+        if self.voted_for.is_none() {
+            self.state_message_queue_writer.offer(NetworkSendType::Single{
+                msg: NetworkSend::RaftEvent(
+                    RaftEvent::VoteForCandiate{server_id: self.server_id}
+                ),
+                server_id
+            });
+            self.voted_for = Some(self.server_id);
+        }
+    }
 
-    fn send_ping(&mut self) {}
+    /// Sends a ping to other servers.
+    fn send_ping(&mut self) {
+        self.state_message_queue_writer.offer(NetworkSendType::Broadcast{
+            msg: NetworkSend::RaftEvent(
+                RaftEvent::Ping {
+                    server_id: self.server_id,
+                    max_commited_term: self.current_commited_term
+                }
+            )
+        });
+    }
+
+    /// Handles a commit from a leader.
+    /// # Arguments
+    /// `term_id` - The term to commit. 
+    fn handle_commit_term(&mut self, term_id: u64) {
+        if term_id > self.current_commited_term {
+            let current_term = self.current_commited_term + 1;
+            loop {
+                if current_term <= term_id {
+                    self.current_commited_term = term_id;
+                    if self.current_term_id >= self.current_commited_term {
+                        loop {
+                            // Update to that term as committed :)
+                            match self.commit_term_file.calculate_pos(&term_id) {
+                                TermPosResult::Pos(pos) => {
+                                    self.commit_term_file.buffer.committed(&pos);
+                                    self.commit_term_file.buffer.committed_timestamp(&pos);
+                                    break;
+                                }
+                                TermPosResult::Overflow => {
+                                    // Goto the next file.
+                                    let next_file_id = self.commit_term_file.file_id + 1;
+                                    let new_start_term = self.commit_term_file.term_end + 1;
+                                    self.commit_term_file = create_term_file(
+                                        &self.file_storage_directory,
+                                        &self.file_prefix,
+                                        next_file_id,
+                                        new_start_term,
+                                        self.commit_file_size);
+                                }
+                                TermPosResult::Underflow => {
+                                    panic!("We should never underflow when updating terms!");
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn process_event(&mut self, event: RaftEvent) {
+        match &mut self.current_state {
+            RaftState::Candidate { votes } => {
+                match event {
+                    RaftEvent::VoteForCandiate { server_id } => {
+                        votes.insert(server_id);
+                        // Check to see if we have enough votes.
+                    }
+                    RaftEvent::VoteForMe {
+                        server_id,
+                        max_term_id,
+                    } => {
+                        if self.current_term_id <= max_term_id {
+                            // Vote for Candidate.
+                            self.handle_vote_for_me(server_id, max_term_id);
+                        }
+                    }
+                    RaftEvent::ClientMessageReceived => {
+                        self.message_queue.skip(event);
+                    }
+                    RaftEvent::ElectedLeader { server_id } => {
+                        self.leader = server_id;
+                        self.current_state = RaftState::Follower {
+                            leader: self.leader
+                        };
+                    }
+                    RaftEvent::VoteTimeout => {
+                        self.voted_for = None;
+                        votes.clear();
+                        self.send_leader_request();
+                    }
+                    RaftEvent::ProcessInternalMessage { msg } => {
+                        // This should never happen since we can't commit while a candidate!
+                    }
+                    _ => {
+                        // Ignore the rest of the events.
+                    }
+                }
+            }
+            RaftState::Follower { leader } => {
+                match event {
+                    RaftEvent::ClientMessageReceived => {
+                        // Forward to the server.
+                    }
+                    RaftEvent::FollowerIndex { server_id, term_id } => {
+                        // Ignore
+                    }
+                    RaftEvent::Commited { term_id } => {
+                        self.handle_commit_term(term_id);
+                    }
+                    RaftEvent::ElectedLeader { server_id } => {
+                        self.voted_for = None;
+                        self.leader = server_id;
+                    }
+                    RaftEvent::LeaderTimeout => {
+                        // try to become leader.
+                        self.current_state = RaftState::Candidate {
+                            votes: HashSet::with_capacity(
+                                self.server_count as usize,
+                            ),
+                        };
+                        self.send_leader_request();
+                    }
+                    RaftEvent::Stop => {
+                    }
+                    RaftEvent::VoteForCandiate { server_id } => {
+                        // We should get this see we are following someone :(
+                    }
+                    RaftEvent::VoteForMe {
+                        server_id,
+                        max_term_id,
+                    } => {
+                        if self.current_term_id <= max_term_id {
+                            // Vote for this candidate if we haven't already voted.  Need to figure out how to keep track of this.
+                            self.handle_vote_for_me(server_id, max_term_id);
+                        }
+                    }
+                    RaftEvent::Pong {
+                        server_id,
+                        max_term_id,
+                    } => {
+                        // We aren't processing these since we aren't the leader.
+                    }
+                    RaftEvent::Ping { max_commited_term, server_id } => {
+                    }
+                    RaftEvent::NoMessagesTimeout => {
+                        // Do nothing since this should be a leader timeout.
+                    }
+                    RaftEvent::VoteTimeout => {
+                        // Clear out who we voted for.
+                        self.voted_for = None;
+                    }
+                    RaftEvent::ProcessInternalMessage { msg } => {
+                        self.handle_internal_message(msg);
+                    }
+                }
+            }
+            RaftState::Leader {
+                next_index,
+                match_index,
+            } => {
+                match event {
+                    RaftEvent::ClientMessageReceived => {
+                        // Go a new possible term.
+                    }
+                    RaftEvent::FollowerIndex { server_id, term_id } => {
+                        next_index.insert(server_id, term_id + 1);
+                    }
+                    RaftEvent::Commited { term_id } => {
+                        // Would be an error since we are sending these :(
+                    }
+                    RaftEvent::ElectedLeader { server_id } => {
+                        if self.server_id != server_id {
+                            self.current_state =
+                                RaftState::Follower { leader: server_id };
+                        }
+                    }
+                    RaftEvent::LeaderTimeout => {
+                        // We are the leader so this shouldn't ever happen.
+                    }
+                    RaftEvent::Stop => {
+                        
+                    },
+                    RaftEvent::VoteForMe {
+                        server_id,
+                        max_term_id,
+                    } => {
+                        self.handle_vote_for_me(server_id, max_term_id);
+                    }
+                    RaftEvent::VoteForCandiate { server_id } => {
+                        // Ignore invalid event.
+                    }
+                    RaftEvent::Pong {
+                        server_id,
+                        max_term_id,
+                    } => {
+                        if let Some(current_max) = match_index.get(&server_id) {
+                            if *current_max > max_term_id {
+                                match_index.insert(server_id, max_term_id);
+                                let mut next_commit_term = self.current_commited_term + 1;
+                                loop {
+                                    let mut votes = 1; // Need to have us as 1 vote :);
+                                    for c in match_index.values() {
+                                        if *c >= next_commit_term {
+                                            votes += 1;
+                                        }
+                                    }
+                                    if self.votes_required <= votes {
+                                        self.current_commited_term = next_commit_term;
+                                        // Send a message to the listeners :)
+                                        self.state_message_queue_writer.offer(
+                                            NetworkSendType::Broadcast {
+                                                msg: NetworkSend::RaftEvent(
+                                                    RaftEvent::Commited {
+                                                        term_id: self.current_commited_term
+                                                    })
+                                            }
+                                        );
+                                        next_commit_term += 1;
+                                    } else {
+                                        // Nothing to commit :)
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    RaftEvent::Ping { max_commited_term, server_id } => {
+                        // Ignore we are the leader and shouldn't be getting a pong.
+                    }
+                    RaftEvent::NoMessagesTimeout => {
+                        // Send ping to the followers.
+                        self.send_ping();
+                    }
+                    RaftEvent::VoteTimeout => {
+                        // Ignore we are the leader so this shouldn't happen.
+                    }
+                    RaftEvent::ProcessInternalMessage { msg } => {
+                        // Process the internal message.
+                        self.handle_internal_message(msg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use crate::raft::*;
+    use std::collections::{ HashMap, HashSet };
+    use a19_concurrent::queue::skip_queue::create_skip_queue;
+    use crate::raft::state_machine::*;
+    use crate::raft::network::*;
+    
+    const FILE_STORAGE_DIRECTORY: &str = "/home/mrh0057/Raft_State_Machine_Test";
+    const FILE_PREFIX: &str = "state_machine_test";
+    const COMMIT_FILE_SIZE: usize = (COMMIT_SIZE * 128) as usize;
+    const EVENT_FILE_SIZE: usize = (EVENT_HEADER_SIZE * 1024) as usize;
+
+    /// Used to crate the state machine.
+    fn create_state_machine() -> (RaftStateMachine, NetworkInfo) {
+        let (event_writer, event_reader) = create_skip_queue(1024);
+        let (net_writer, net_reader) = SpscQueueSendWrap::new(1024);
+        let mut raft_state_machine = RaftStateMachine {
+            server_id: 1,
+            current_state: RaftState::Candidate{votes: HashSet::new()},
+            current_term_id: 0,
+            last_appended_term_id: 0,
+            voted_for: None,
+            connected_server: HashMap::with_capacity(1),
+            leader_votes: HashSet::new(),
+            message_queue: event_reader,
+            commit_term_file: create_term_file(
+                FILE_STORAGE_DIRECTORY,
+                FILE_PREFIX,
+                1,
+                1,
+                COMMIT_FILE_SIZE as usize),
+            new_term_file: create_term_file(
+                FILE_STORAGE_DIRECTORY,
+                FILE_PREFIX,
+                1,
+                1,
+                COMMIT_FILE_SIZE as usize),
+            commit_file_size: COMMIT_SIZE as usize,
+            server_count: 3,
+            leader: 0,
+            state_message_queue_writer: net_writer,
+            max_message_id: Arc::new(AtomicU64::new(0)),
+            current_commited_term: 0,
+            votes_required: 2,
+            file_storage_directory: FILE_STORAGE_DIRECTORY.to_owned(),
+            file_prefix: FILE_PREFIX.to_owned(),
+        };
+        raft_state_machine.connected_server.insert(1, ConnectedServer{
+            server_id: 1
+        });
+        raft_state_machine.connected_server.insert(2, ConnectedServer{
+            server_id: 2
+        });
+        raft_state_machine.connected_server.insert(3, ConnectedServer{
+            server_id: 3
+        });
+
+        let net = NetworkInfo {
+            net_reader
+        };
+        (raft_state_machine, net)
+    }
+
+    #[test]
+    fn test_join_with_other_leader() {
+        let (mut state_machine, _) = create_state_machine();
+        state_machine.process_event(
+            RaftEvent::ElectedLeader{server_id: 2}
+        );
+        match state_machine.current_state {
+            RaftState::Follower{leader} => {
+                assert_eq!(2, leader);
+            },
+            _ => {
+                assert!(false);
+            }
+        }
+    }
+
+    struct NetworkInfo {
+        net_reader: SpscQueueReceiveWrap<NetworkSendType>,
+    }
 }
