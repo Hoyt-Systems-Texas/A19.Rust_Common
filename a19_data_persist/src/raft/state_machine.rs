@@ -2,6 +2,7 @@ use crate::file;
 use crate::raft::*;
 use crate::raft::{CommitFile, TermFile};
 use crate::raft::network::{ NetworkSendType, NetworkSend };
+use a19_core::current_time_ms;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
@@ -356,17 +357,21 @@ impl RaftStateMachine {
     /// `term_id` - The term to commit. 
     fn handle_commit_term(&mut self, term_id: u64) {
         if term_id > self.current_commited_term {
-            let current_term = self.current_commited_term + 1;
+            let mut current_term = self.current_commited_term + 1;
             loop {
                 if current_term <= term_id {
                     self.current_commited_term = term_id;
-                    if self.current_term_id >= self.current_commited_term {
+                    if current_term <= self.current_commited_term {
                         loop {
                             // Update to that term as committed :)
-                            match self.commit_term_file.calculate_pos(&term_id) {
+                            match self.commit_term_file.calculate_pos(&current_term) {
                                 TermPosResult::Pos(pos) => {
-                                    self.commit_term_file.buffer.committed(&pos);
-                                    self.commit_term_file.buffer.committed_timestamp(&pos);
+                                    self.commit_term_file.buffer.set_committed(&pos);
+                                    self.commit_term_file.buffer.set_committed_timestamp(
+                                        &pos,
+                                        &current_time_ms());
+                                    self.current_term_id = current_term;
+                                    current_term += 1;
                                     break;
                                 }
                                 TermPosResult::Overflow => {
@@ -385,6 +390,8 @@ impl RaftStateMachine {
                                 }
                             }
                         }
+                    } else {
+                        break;
                     }
                 } else {
                     break;
@@ -760,6 +767,29 @@ mod test {
                 assert!(false);
             }
         }
+    }
+
+    #[test]
+    pub fn commit_term_client() {
+        let (mut state_machine, mut net) = create_state_machine();
+        let term_id = 1;
+        let pos = match state_machine.commit_term_file.calculate_pos(&term_id) {
+            TermPosResult::Pos(pos) => pos,
+            _ => {
+                panic!("Should be in range!");
+            }
+        };
+
+        let zeros = [0; COMMIT_FILE_SIZE];
+        state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
+        state_machine.current_state = RaftState::Follower{leader: 2};
+        state_machine.process_event(
+            RaftEvent::Commited{term_id});
+
+        let commited = state_machine.commit_term_file.buffer.committed(&pos);
+        let time_stamp = state_machine.commit_term_file.buffer.committed_timestamp(&pos);
+        assert!(commited > 0);
+        assert!(time_stamp > 0);
     }
 
     struct NetworkInfo {

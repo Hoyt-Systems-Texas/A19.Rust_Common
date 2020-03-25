@@ -21,6 +21,13 @@ pub fn current_time_secs() -> u64 {
     }
 }
 
+pub fn current_time_ms() -> u64 {
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => n.as_millis() as u64,
+        Err(_) => 0
+    }
+}
+
 #[cfg(test)]
 mod test {
 
