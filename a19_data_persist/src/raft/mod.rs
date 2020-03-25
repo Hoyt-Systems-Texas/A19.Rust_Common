@@ -779,7 +779,7 @@ impl TermFile {
         TermFile {
             buffer,
             term_start,
-            term_end: c / COMMIT_SIZE,
+            term_end: c / COMMIT_SIZE + term_start - 1,
             file_id,
         }
     }

@@ -64,6 +64,7 @@ pub(crate) enum RaftEvent {
     ClientMessageReceived,
     /// The id of the term that has been committed.
     Commited {
+        server_id: u32,
         term_id: u64,
     },
     /// Stop the state machine from running.
@@ -370,7 +371,6 @@ impl RaftStateMachine {
                                     self.commit_term_file.buffer.set_committed_timestamp(
                                         &pos,
                                         &current_time_ms());
-                                    self.current_term_id = current_term;
                                     current_term += 1;
                                     break;
                                 }
@@ -463,8 +463,10 @@ impl RaftStateMachine {
                     RaftEvent::FollowerIndex { server_id, term_id } => {
                         // Ignore
                     }
-                    RaftEvent::Commited { term_id } => {
-                        self.handle_commit_term(term_id);
+                    RaftEvent::Commited { term_id, server_id } => {
+                        if *leader == server_id {
+                            self.handle_commit_term(term_id);
+                        } 
                     }
                     RaftEvent::ElectedLeader { server_id } => {
                         self.voted_for = None;
@@ -524,7 +526,7 @@ impl RaftStateMachine {
                     RaftEvent::FollowerIndex { server_id, term_id } => {
                         next_index.insert(server_id, term_id + 1);
                     }
-                    RaftEvent::Commited { term_id } => {
+                    RaftEvent::Commited { term_id, server_id } => {
                         // Would be an error since we are sending these :(
                     }
                     RaftEvent::ElectedLeader { server_id } => {
@@ -570,6 +572,7 @@ impl RaftStateMachine {
                                             NetworkSendType::Broadcast {
                                                 msg: NetworkSend::RaftEvent(
                                                     RaftEvent::Commited {
+                                                        server_id: self.server_id,
                                                         term_id: self.current_commited_term
                                                     })
                                             }
@@ -616,7 +619,8 @@ mod test {
     
     const FILE_STORAGE_DIRECTORY: &str = "/home/mrh0057/Raft_State_Machine_Test";
     const FILE_PREFIX: &str = "state_machine_test";
-    const COMMIT_FILE_SIZE: usize = (COMMIT_SIZE * 128) as usize;
+    const TERMS_PER_FILE: u64 = 128;
+    const COMMIT_FILE_SIZE: usize = (COMMIT_SIZE * TERMS_PER_FILE) as usize;
     const EVENT_FILE_SIZE: usize = (EVENT_HEADER_SIZE * 1024) as usize;
 
     /// Used to crate the state machine.
@@ -644,7 +648,7 @@ mod test {
                 1,
                 1,
                 COMMIT_FILE_SIZE as usize),
-            commit_file_size: COMMIT_SIZE as usize,
+            commit_file_size: COMMIT_FILE_SIZE,
             server_count: 3,
             leader: 0,
             state_message_queue_writer: net_writer,
@@ -780,16 +784,67 @@ mod test {
             }
         };
 
-        let zeros = [0; COMMIT_FILE_SIZE];
+        let zeros = get_commit_zeros();
         state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
         state_machine.current_state = RaftState::Follower{leader: 2};
         state_machine.process_event(
-            RaftEvent::Commited{term_id});
+            RaftEvent::Commited{
+                server_id: 2,
+                term_id
+            });
 
         let commited = state_machine.commit_term_file.buffer.committed(&pos);
         let time_stamp = state_machine.commit_term_file.buffer.committed_timestamp(&pos);
         assert!(commited > 0);
         assert!(time_stamp > 0);
+    }
+
+    /// Used to get the zeros to clear out a commit file.
+    fn get_commit_zeros() -> [u8; COMMIT_FILE_SIZE] {
+        [0; COMMIT_FILE_SIZE]
+    }
+
+    #[test]
+    pub fn commit_term_client_rollover() {
+        let (mut state_machine, mut net) = create_state_machine();
+        let term_id = TERMS_PER_FILE + 1;
+        state_machine.current_term_id = 50;
+        state_machine.current_commited_term = 50;
+        let zeros = get_commit_zeros();
+        state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
+        let mut next_term_file = create_term_file(
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            2,
+            129,
+            COMMIT_FILE_SIZE);
+        let mut first_term_file = create_term_file(
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            1,
+            1,
+            COMMIT_FILE_SIZE);
+        next_term_file.buffer.write_bytes(&0, &zeros);
+
+        state_machine.current_state = RaftState::Follower{leader: 2};
+        state_machine.process_event(RaftEvent::Commited {
+            server_id: 2,
+            term_id
+        });
+
+        assert_eq!(state_machine.commit_term_file.file_id, 2);
+        let commited = next_term_file.buffer.committed(&0);
+        let timestamp = next_term_file.buffer.committed_timestamp(&0);
+        assert!(commited > 0);
+        assert!(timestamp > 0);
+
+        for i in 50..128 {
+            let pos = (COMMIT_SIZE * i) as usize;
+            let committed = first_term_file.buffer.committed(&pos);
+            let timestamp = first_term_file.buffer.committed_timestamp(&pos);
+            assert!(committed > 0);
+            assert!(timestamp > 0);
+        }
     }
 
     struct NetworkInfo {

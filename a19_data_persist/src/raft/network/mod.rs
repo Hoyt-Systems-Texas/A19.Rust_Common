@@ -470,7 +470,7 @@ impl RaftEventEncoder {
     fn write(&mut self, raft_event: RaftEvent) -> bool {
         match raft_event {
             RaftEvent::ClientMessageReceived => false,
-            RaftEvent::Commited { term_id } => {
+            RaftEvent::Commited { term_id, server_id } => {
                 self.zero_body();
                 BigEndian::write_u64(
                     &mut self.msg_buffer[STOP_SERVER..(STOP_SERVER + 8)],
