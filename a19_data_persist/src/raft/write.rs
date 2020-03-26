@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use crate::file::*;
 use crate::raft::*;
 
@@ -42,9 +42,73 @@ pub(crate) enum MessageWriteFileType {
 }
 
 pub(crate) struct MessageWriteCollection {
-    files: HashMap<u32, MessageFileInfo>,
+    /// The collection of files.
+    files: BTreeMap<u32, MessageFileInfo>,
+    /// The storage directory of the files.
     file_storage_directory: String,
+    /// The file prefix.
     file_prefix: String,
+}
+
+impl MessageWriteCollection {
+    
+    /// Opens a directory and reads in the files containing the messages.
+    /// # Arguments
+    /// `file_storage_directory` - The directory containing the files.
+    /// `file_prefix` - The file prefix.
+    /// # Returns
+    /// The message write collection.
+    fn open_dir(file_storage_directory: &str, file_prefix: &str) -> crate::file::Result<Self> {
+        let directory_path = Path::new(file_storage_directory);
+        if !directory_path.is_dir() || !directory_path.exists() {
+            create_dir(directory_path)?;
+        }
+        let starts_with_commit = format!("{}.{}", file_prefix, COMMIT_FILE_POSTIX);
+        let mut collection = BTreeMap::new();
+        for entry in read_dir(directory_path)? {
+            let file = entry?;
+            let path: PathBuf = file.path();
+            if path.is_file() {
+                match path.file_name() {
+                    Some(p) => {
+                        match p.to_str() {
+                            Some(p) => {
+                                if p.starts_with(&starts_with_commit) {
+                                    match read_file_id(p) {
+                                        Some(id) => {
+                                            let message_file =  get_message_file_info(path.to_str().unwrap())?;
+                                            collection.insert(id, message_file);
+                                        }
+                                        _ => {
+                                            
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+
+                            }
+                        }
+                    }
+                    _ => {
+                        
+                    }
+                }
+            }
+        }
+        Ok(MessageWriteCollection{
+            files: collection,
+            file_prefix: file_prefix.to_string(),
+            file_storage_directory: file_storage_directory.to_string(),
+        })
+    }
+
+    /// Used to get a file with the specified id.
+    /// # Arguments
+    /// `file_id` - The id of the file to get.
+    fn get_message_file<'a>(&'a self, file_id: &u32) -> Option<&'a MessageFileInfo> {
+        self.files.get(file_id)
+    }
 }
 
 /// Used to crate a new message file.
@@ -168,5 +232,28 @@ mod test {
         assert_eq!(file_info.file_id, 1);
         assert_eq!(file_info.message_id_start, 1);
         assert_eq!(path, file_info.path);
+    }
+
+    #[test]
+    #[serial]
+    pub fn get_current_file_collection() {
+        cleanup();
+        {
+            let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
+            r.write(&0, &1, &1, &[2; 50]);
+            r.flush();
+
+            let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
+            r.write(&0, &2, &1, &[2; 50]);
+            r.flush();
+        }
+        let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX).unwrap();
+        assert_eq!(message_file.files.len(), 2);
+        let file = message_file.get_message_file(&1).unwrap();
+        assert_eq!(file.file_id, 1);
+        assert_eq!(file.message_id_start, 1);
+        let file = message_file.get_message_file(&2).unwrap();
+        assert_eq!(file.file_id, 1);
+        assert_eq!(file.message_id_start, 2);
     }
 }
