@@ -43,7 +43,7 @@ enum RaftState {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum RaftEvent {
     VoteTimeout,
     LeaderTimeout,
@@ -400,28 +400,102 @@ impl RaftStateMachine {
         }
     }
 
+    fn handle_candidate(&mut self, server_id: u32) {
+        if let RaftState::Candidate{votes} = &mut self.current_state {
+            votes.insert(server_id);
+            if votes.len() >= self.votes_required as usize {
+                self.current_state = RaftState::Leader {
+                    next_index: HashMap::with_capacity(10),
+                    match_index: HashMap::with_capacity(10),
+                };
+                // We won let the others know.
+                self.state_message_queue_writer.offer(
+                    NetworkSendType::Broadcast {
+                        msg: NetworkSend::RaftEvent(
+                            RaftEvent::ElectedLeader{
+                            server_id: self.server_id
+                            }
+                        )
+                    });
+            }
+                        // Check to see if we have enough votes.
+        }
+    }
+
+    fn handle_vote_timeout(&mut self) {
+        if let RaftState::Candidate{votes} = &mut self.current_state {
+            self.voted_for = None;
+            votes.clear();
+            votes.insert(self.server_id);
+            self.send_leader_request();
+        }
+    }
+
+    fn handle_follower_index(&mut self, server_id: u32, term_id: u64) {
+        if let RaftState::Leader{next_index, match_index} = &mut self.current_state {
+            next_index.insert(server_id, term_id + 1);
+        } 
+    }
+
+    fn handle_leader_pong(&mut self, server_id: u32, max_term_id: u64) {
+        let (start, end) = if let RaftState::Leader{next_index, match_index} = &mut self.current_state {
+            let current_max = if let Some(current_max) = match_index.get(&server_id) {
+                *current_max
+            } else {
+                0 // Defaults to zero.
+            };
+            let start_term = self.current_commited_term + 1;
+            if max_term_id <= self.current_term_id
+                && current_max <= max_term_id {
+                {
+                    match_index.insert(server_id, max_term_id);
+                }
+                let mut next_commit_term = self.current_commited_term + 1;
+                loop {
+                    let mut votes = 1; // Need to have us as 1 vote :);
+                    for c in match_index.values() {
+                        if *c >= next_commit_term {
+                            votes += 1;
+                        }
+                    }
+                    if self.votes_required <= votes {
+                        self.current_commited_term = next_commit_term;
+                        // Send a message to the listeners :)
+                        next_commit_term += 1;
+                    } else {
+                        // Nothing to commit :)
+                        break (start_term, self.current_commited_term);
+                    }
+                }
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+        // Break them apart to allow for faster optimizations.
+        for i in start..=end {
+            self.handle_commit_term(i);
+        }
+        for i in start..=end {
+            self.state_message_queue_writer.offer(
+                NetworkSendType::Broadcast {
+                    msg: NetworkSend::RaftEvent(
+                        RaftEvent::Commited {
+                            server_id: self.server_id,
+                            term_id: i
+                        })
+                }
+            );
+        }
+    }
+
     fn process_event(&mut self, event: RaftEvent) {
-        match &mut self.current_state {
+        match &self.current_state {
             RaftState::Candidate { votes } => {
                 match event {
                     RaftEvent::VoteForCandiate { server_id } => {
-                        votes.insert(server_id);
-                        if votes.len() >= self.votes_required as usize {
-                            self.current_state = RaftState::Leader {
-                                next_index: HashMap::with_capacity(10),
-                                match_index: HashMap::with_capacity(10),
-                            };
-                            // We won let the others know.
-                            self.state_message_queue_writer.offer(
-                                NetworkSendType::Broadcast {
-                                    msg: NetworkSend::RaftEvent(
-                                        RaftEvent::ElectedLeader{
-                                        server_id: self.server_id
-                                        }
-                                    )
-                                });
-                        }
-                        // Check to see if we have enough votes.
+                        self.handle_candidate(server_id);
                     }
                     RaftEvent::VoteForMe {
                         server_id,
@@ -442,10 +516,7 @@ impl RaftStateMachine {
                         };
                     }
                     RaftEvent::VoteTimeout => {
-                        self.voted_for = None;
-                        votes.clear();
-                        votes.insert(self.server_id);
-                        self.send_leader_request();
+                        self.handle_vote_timeout();
                     }
                     RaftEvent::ProcessInternalMessage { msg } => {
                         // This should never happen since we can't commit while a candidate!
@@ -524,7 +595,7 @@ impl RaftStateMachine {
                         // Go a new possible term.
                     }
                     RaftEvent::FollowerIndex { server_id, term_id } => {
-                        next_index.insert(server_id, term_id + 1);
+                        self.handle_follower_index(server_id, term_id);
                     }
                     RaftEvent::Commited { term_id, server_id } => {
                         // Would be an error since we are sending these :(
@@ -554,37 +625,7 @@ impl RaftStateMachine {
                         server_id,
                         max_term_id,
                     } => {
-                        if let Some(current_max) = match_index.get(&server_id) {
-                            if *current_max > max_term_id {
-                                match_index.insert(server_id, max_term_id);
-                                let mut next_commit_term = self.current_commited_term + 1;
-                                loop {
-                                    let mut votes = 1; // Need to have us as 1 vote :);
-                                    for c in match_index.values() {
-                                        if *c >= next_commit_term {
-                                            votes += 1;
-                                        }
-                                    }
-                                    if self.votes_required <= votes {
-                                        self.current_commited_term = next_commit_term;
-                                        // Send a message to the listeners :)
-                                        self.state_message_queue_writer.offer(
-                                            NetworkSendType::Broadcast {
-                                                msg: NetworkSend::RaftEvent(
-                                                    RaftEvent::Commited {
-                                                        server_id: self.server_id,
-                                                        term_id: self.current_commited_term
-                                                    })
-                                            }
-                                        );
-                                        next_commit_term += 1;
-                                    } else {
-                                        // Nothing to commit :)
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        self.handle_leader_pong(server_id, max_term_id);
                     }
                     RaftEvent::Ping { max_commited_term, server_id } => {
                         // Ignore we are the leader and shouldn't be getting a pong.
@@ -845,6 +886,54 @@ mod test {
             assert!(committed > 0);
             assert!(timestamp > 0);
         }
+    }
+
+    #[test]
+    pub fn commit_term_leader_test() {
+        let (mut state_machine, mut net) = create_state_machine();
+        state_machine.current_term_id = 1;
+        state_machine.current_commited_term = 0;
+        state_machine.current_state = RaftState::Leader{
+            next_index: HashMap::with_capacity(3),
+            match_index: HashMap::with_capacity(3),
+        };
+        state_machine.current_term_id = 1;
+
+        state_machine.process_event(RaftEvent::Pong{
+            server_id: 2,
+            max_term_id: 1
+        });
+
+        let net_result = net.net_reader.poll().unwrap();
+        match net_result {
+            NetworkSendType::Broadcast{msg} => {
+                match msg {
+                    NetworkSend::RaftEvent(evt) => {
+                        match evt {
+                            RaftEvent::Commited{server_id, term_id} => {
+                                assert_eq!(server_id, 1);
+                                assert_eq!(term_id, 1);
+                            }
+                            _ => {
+                                assert!(false);
+                            }
+                        }
+                    }
+                    _ => {
+                        assert!(false);
+                    }
+                }
+            },
+            _ => {
+                assert!(false);
+            }
+        }
+        let pos = 0;
+        let commited = state_machine.commit_term_file.buffer.committed(&pos);
+        let timestamp = state_machine.commit_term_file.buffer.committed_timestamp(&pos);
+
+        assert!(commited > 0);
+        assert!(timestamp > 0);
     }
 
     struct NetworkInfo {
