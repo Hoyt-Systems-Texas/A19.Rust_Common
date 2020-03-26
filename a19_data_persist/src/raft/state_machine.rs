@@ -469,12 +469,11 @@ impl RaftStateMachine {
                         }
                     }
                     if self.votes_required <= votes {
-                        self.current_commited_term = next_commit_term;
                         // Send a message to the listeners :)
                         next_commit_term += 1;
                     } else {
                         // Nothing to commit :)
-                        break (start_term, self.current_commited_term);
+                        break (start_term, next_commit_term - 1);
                     }
                 }
             } else {
@@ -908,6 +907,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     pub fn commit_term_leader_test() {
         let (mut state_machine, mut net) = create_state_machine();
         state_machine.current_term_id = 1;
@@ -917,13 +917,13 @@ mod test {
             match_index: HashMap::with_capacity(3),
         };
         state_machine.current_term_id = 1;
+        let zeros = get_commit_zeros();
+        state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
 
         state_machine.process_event(RaftEvent::Pong{
             server_id: 2,
             max_term_id: 1
         });
-        let zeros = get_commit_zeros();
-        state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
         let net_result = net.net_reader.poll().unwrap();
         match net_result {
             NetworkSendType::Broadcast{msg} => {
