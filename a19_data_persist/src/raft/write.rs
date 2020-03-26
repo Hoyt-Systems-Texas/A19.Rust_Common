@@ -85,18 +85,16 @@ fn get_message_file_info(path: &str) -> crate::file::Result<MessageFileInfo> {
         Some(id) => {
             let (read, _) = unsafe {MessageFileStore::open(&path)?};
             let mut msg_id: u64 = 0;
-            {
-                let result = read.read(0, move |_, id, _| {
-                    if id > 0 {
-                        msg_id = id;
-                    }
-                })?;
-                Ok(MessageFileInfo {
-                    path: path.to_owned(),
-                    file_id: id,
-                    message_id_start: msg_id,
-                })
-            }
+            let result = read.read(0, |_, id, _| {
+                if id > 0 {
+                    msg_id = id;
+                }
+            })?;
+            Ok(MessageFileInfo {
+                path: path.to_owned(),
+                file_id: id,
+                message_id_start: msg_id,
+            })
         },
         _ => {
             Err(crate::file::Error::InvalidFile)
@@ -154,5 +152,21 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    #[serial]
+    pub fn read_existing_file() {
+        cleanup();
+        {
+            let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
+            r.write(&0, &1, &1, &[2; 50]);
+            r.flush();
+        }
+        let path = create_commit_name(FILE_STORAGE_DIRECTORY, FILE_PREFIX, &1);
+        let file_info = get_message_file_info(&path).unwrap();
+        assert_eq!(file_info.file_id, 1);
+        assert_eq!(file_info.message_id_start, 1);
+        assert_eq!(path, file_info.path);
     }
 }
