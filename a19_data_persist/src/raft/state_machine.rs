@@ -671,7 +671,9 @@ mod test {
     use a19_concurrent::queue::skip_queue::create_skip_queue;
     use crate::raft::state_machine::*;
     use crate::raft::network::*;
-    
+    use a19_concurrent::buffer::DirectByteBuffer;
+    use serial_test::serial;
+
     const FILE_STORAGE_DIRECTORY: &str = "/home/mrh0057/Raft_State_Machine_Test";
     const FILE_PREFIX: &str = "state_machine_test";
     const TERMS_PER_FILE: u64 = 128;
@@ -746,6 +748,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     fn test_leader_timeout() {
         let (mut state_machine, mut net) = create_state_machine();
         state_machine.process_event(
@@ -829,6 +832,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     pub fn commit_term_client() {
         let (mut state_machine, mut net) = create_state_machine();
         let term_id = 1;
@@ -860,6 +864,7 @@ mod test {
     }
 
     #[test]
+    #[serial]
     pub fn commit_term_client_rollover() {
         let (mut state_machine, mut net) = create_state_machine();
         let term_id = TERMS_PER_FILE + 1;
@@ -917,7 +922,8 @@ mod test {
             server_id: 2,
             max_term_id: 1
         });
-
+        let zeros = get_commit_zeros();
+        state_machine.commit_term_file.buffer.write_bytes(&0, &zeros);
         let net_result = net.net_reader.poll().unwrap();
         match net_result {
             NetworkSendType::Broadcast{msg} => {

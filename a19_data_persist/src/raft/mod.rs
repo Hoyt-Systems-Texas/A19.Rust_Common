@@ -19,6 +19,7 @@
 //!
 pub mod network;
 pub mod state_machine;
+pub mod write;
 
 pub const EVENT_FILE_POSTFIX: &str = "events";
 pub const COMMIT_FILE_POSTIX: &str = "commit";
@@ -1015,7 +1016,7 @@ pub trait PersistedMessageFileMut {
 }
 
 #[derive(Debug, Clone, Eq)]
-struct MessageFileInfo {
+pub(crate) struct MessageFileInfo {
     path: String,
     file_id: u32,
     message_id_start: u64,
@@ -1250,7 +1251,7 @@ pub trait MessageStore {
 /// path_str - The path string to parse in.
 /// # Returns
 /// The id of the file if it can be parsed in.
-fn read_file_id(path_str: &str) -> Option<u32> {
+pub(crate) fn read_file_id(path_str: &str) -> Option<u32> {
     let file_id_opt: Option<&str> = path_str.split(".").last();
     match file_id_opt {
         Some(file_id) => match file_id.parse::<u32>() {
@@ -1886,6 +1887,9 @@ fn commit_thread_single(
                                 } => {
                                     panic!("We are reading in a message this should never happen!");
                                 }
+                                file::Error::AlreadyExists | file::Error::InvalidFile => {
+                                    panic!("Unable to get the file!");
+                                }
                             }
                         }
                     }
@@ -2014,6 +2018,9 @@ where
                             }
                             file::Error::FileError(e) => {
                                 thread::sleep_ms(2);
+                            }
+                            file::Error::InvalidFile | file::Error::AlreadyExists => {
+                                // do nothing
                             }
                         }
                     }

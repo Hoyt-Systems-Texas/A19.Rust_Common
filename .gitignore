@@ -3,3 +3,5 @@
 **/*.swp
 **/target
 \#*
+*~undo-tree~
+*rej

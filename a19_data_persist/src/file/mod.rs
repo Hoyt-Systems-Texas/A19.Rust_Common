@@ -237,6 +237,8 @@ pub enum Error {
         capacity: usize,
         remaining: usize,
     },
+    InvalidFile,
+    AlreadyExists,
 }
 
 /// Represents the storage of messages.
