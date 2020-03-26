@@ -397,6 +397,16 @@ impl RaftStateMachine {
                     break;
                 }
             }
+            // Update the match id.
+            match self.commit_term_file.calculate_pos(&term_id) {
+                TermPosResult::Pos(pos) => {
+                    let id = self.commit_term_file.buffer.max_message_id(&pos);
+                    self.max_message_id.store(id, atomic::Ordering::Relaxed);
+                },
+                _ => {
+                    panic!("The file should exist since we just used it!");
+                }
+            }
         }
     }
 
@@ -488,6 +498,10 @@ impl RaftStateMachine {
                 }
             );
         }
+    }
+
+    fn process_message_queue(&self) {
+        
     }
 
     fn process_event(&mut self, event: RaftEvent) {
