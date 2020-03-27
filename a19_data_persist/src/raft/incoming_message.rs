@@ -12,14 +12,14 @@ const RANDOM_SHIFT_MASK: u32 = 0x00_00_FF_FF;
 const SERVER_ID_MASK: u64 = 0b1111111111000000000000000000000000000000000000000000000000000000;
 const MSG_ID_MASK: u64    = 0b0000000000000000000000000011111111111111111111111111111111111111;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum IncomingEvt {
     ElectedLeader,
     Follower{server: u32},
     NoHandler,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum IncomingState {
     /// This server is the leader and needs to append message directly to the buffer.
     Leader,
@@ -40,10 +40,38 @@ pub(crate) struct IncomingMessageProcessor {
     current_state: IncomingState,
 }
 
-pub(crate) struct ImcomingMessageClient {
+pub struct IncomingMessageClient {
     /// The incoming buffer we right the messages to.
     incoming_writer: ManyToOneBufferWriter,
     internal_message_id: AtomicU64,
+}
+
+/// Creates an incoming message processor.
+/// # Arguments
+/// `file_storage_directory` - The directory where the message files are stored.
+/// `file_prefix` - The file prefix to use for the generated files.
+/// `file_size` - The size of the message file.
+/// `buffer_size` - The size of the buffer.
+pub(crate) fn create_incoming_message_processor(
+    server_id: u32,
+    file_storage_directory: &str,
+    file_prefix: &str,
+    file_size: usize,
+    buffer_size: &usize) -> (IncomingMessageProcessor, IncomingMessageClient) {
+    let (read, write) = create_many_to_one(buffer_size);
+    let collection = MessageWriteCollection::open_dir(file_storage_directory, file_prefix, file_size).unwrap();
+    let start_id = create_start_id(server_id);
+    let processor = IncomingMessageProcessor {
+        current_state: IncomingState::NoHandler,
+        incoming_queue: read,
+        message_writer_collection: collection,
+        server_id
+    };
+    let client = IncomingMessageClient {
+        incoming_writer: write,
+        internal_message_id: AtomicU64::new(start_id)
+    };
+    (processor, client)
 }
 
 /// Creates the starting id for the server.  Uses a 16 bit random number to make the likelihood of it repeating on start very low.
@@ -67,21 +95,237 @@ pub fn get_server_id_from_message(server_msg_id: &u64) -> u32 {
     ((server_msg_id & SERVER_ID_MASK) >> SERVER_ID_SHIFT) as u32
 }
 
+/// Used to get the id for the message.
+/// # Arguments
+/// `server_msg_id` - The id of the server msg.
+/// # Returns
+/// The server id to get the message id.
 pub fn get_message_id_from_message(server_msg_id: &u64) -> u64 {
     (server_msg_id & MSG_ID_MASK)
 }
 
+impl IncomingMessageProcessor {
+
+    /// Used to process the incoming event.
+    /// # Arguments
+    /// `event` - The incoming event to handle.
+    fn process_event(&mut self, event: IncomingEvt) {
+        match self.current_state {
+            IncomingState::Follower{server_id} => {
+                match event {
+                    IncomingEvt::ElectedLeader => {
+                        self.change_leader();
+                    }
+                    IncomingEvt::Follower{server} => {
+                        self.change_follower(server);
+                    }
+                    IncomingEvt::NoHandler => {
+                        self.change_no_handler();
+                    }
+                }
+            },
+            IncomingState::NoHandler => {
+                match event {
+                    IncomingEvt::ElectedLeader => {
+                        self.change_leader();
+                    }
+                    IncomingEvt::Follower{server} => {
+                        if server == self.server_id {
+                            self.change_leader();
+                        } else {
+                            self.change_follower(server);
+                        }
+                    }
+                    IncomingEvt::NoHandler => {
+                        self.change_no_handler();
+                    }
+                }
+            },
+            IncomingState::Leader => {
+                match event {
+                    IncomingEvt::ElectedLeader => {
+                        // Do nothing
+                    }
+                    IncomingEvt::Follower{server} => {
+                        self.change_follower(server);
+                    }
+                    IncomingEvt::NoHandler => {
+                        self.change_no_handler();
+                    }
+                }
+            }
+            
+        }
+    }
+
+    fn change_follower(&mut self, leader: u32) {
+        if self.server_id == leader {
+            self.current_state = IncomingState::Leader;
+        } else {
+            self.current_state = IncomingState::Follower{server_id: leader};
+        }
+    }
+
+    fn change_leader(&mut self) {
+        self.current_state = IncomingState::Leader;
+    }
+
+    fn change_no_handler(&mut self) {
+        self.current_state = IncomingState::NoHandler;
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use std::fs::*;
     use serial_test::serial;
     use crate::raft::incoming_message::*;
+    use a19_concurrent::buffer::ring_buffer::{ManyToOneBufferWriter, ManyToOneBufferReader, create_many_to_one};
+
+    const FILE_STORAGE_DIRECTORY: &str = "../../../cargo/tests/a19_data_persisted_incoming/";
+    const FILE_PREFIX: &str = "incoming";
+
+    fn clean() {
+        let path = Path::new(FILE_STORAGE_DIRECTORY);
+        if path.exists() {
+            remove_dir_all(FILE_STORAGE_DIRECTORY);
+        }
+        
+    }
 
     #[test]
+    #[serial]
     pub fn create_start_id_test() {
+        clean();
         let server_id = 1;
         let start_id = create_start_id(server_id);
         assert_eq!(server_id, get_server_id_from_message(&start_id));
         assert_eq!(0, get_message_id_from_message(&start_id));
+    }
+
+    #[test]
+    #[serial]
+    pub fn create_incoming_message_processor_test() {
+        clean();
+        let (processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            32 * 1000,
+            &(32 * 1000 as usize)
+        );
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_follower_leader_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::Follower{server_id: 2};
+        processor.process_event(IncomingEvt::ElectedLeader);
+        assert_eq!(IncomingState::Leader, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_follower_leader_follower_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::Follower{server_id: 2};
+        processor.process_event(IncomingEvt::Follower{server: 1});
+        assert_eq!(IncomingState::Leader, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_follower_leader_none_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::NoHandler;
+        processor.process_event(IncomingEvt::ElectedLeader);
+        assert_eq!(IncomingState::Leader, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_leader_follower_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::Leader;
+        processor.process_event(IncomingEvt::Follower{server: 2});
+        assert_eq!(IncomingState::Follower{server_id: 2}, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_leader_follower_none_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::NoHandler;
+        processor.process_event(IncomingEvt::Follower{server: 2});
+        assert_eq!(IncomingState::Follower{server_id: 2}, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_leader_none_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::Leader;
+        processor.process_event(IncomingEvt::NoHandler);
+        assert_eq!(IncomingState::NoHandler, processor.current_state);
+    }
+
+    #[test]
+    #[serial]
+    pub fn process_event_follower_nohandler_test() {
+        clean();
+        let (mut processor, client) = create_incoming_message_processor(
+            1,
+            FILE_STORAGE_DIRECTORY,
+            FILE_PREFIX,
+            (32 * 1000 as usize),
+            &(32 * 1000 as usize));
+
+        processor.current_state = IncomingState::Follower{server_id: 2};
+        processor.process_event(IncomingEvt::NoHandler);
+        assert_eq!(IncomingState::NoHandler, processor.current_state);
     }
 }
 

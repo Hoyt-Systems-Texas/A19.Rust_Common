@@ -48,6 +48,8 @@ pub(crate) struct MessageWriteCollection {
     file_storage_directory: String,
     /// The file prefix.
     file_prefix: String,
+    /// The size of the message to create.
+    file_size: usize,
 }
 
 impl MessageWriteCollection {
@@ -58,7 +60,7 @@ impl MessageWriteCollection {
     /// `file_prefix` - The file prefix.
     /// # Returns
     /// The message write collection.
-    fn open_dir(file_storage_directory: &str, file_prefix: &str) -> crate::file::Result<Self> {
+    pub(crate) fn open_dir(file_storage_directory: &str, file_prefix: &str, file_size: usize) -> crate::file::Result<Self> {
         let directory_path = Path::new(file_storage_directory);
         if !directory_path.is_dir() || !directory_path.exists() {
             create_dir(directory_path)?;
@@ -100,6 +102,7 @@ impl MessageWriteCollection {
             files: collection,
             file_prefix: file_prefix.to_string(),
             file_storage_directory: file_storage_directory.to_string(),
+            file_size,
         })
     }
 
@@ -108,9 +111,10 @@ impl MessageWriteCollection {
     /// `file_id` - The id of the file to get.
     /// # Returns
     /// The file message file info.
-    fn get_message_file<'a>(&'a self, file_id: &u32) -> Option<&'a MessageFileInfo> {
+    pub(crate) fn get_message_file<'a>(&'a self, file_id: &u32) -> Option<&'a MessageFileInfo> {
         self.files.get(file_id)
     }
+
 }
 
 /// Used to crate a new message file.
@@ -175,7 +179,7 @@ mod test {
     use crate::raft::write_message::*;
     use serial_test::serial;
 
-    const FILE_STORAGE_DIRECTORY: &str = "/home/mrh0057/cargo/tests/message_write_test";
+    const FILE_STORAGE_DIRECTORY: &str = "../../../cargo/tests/message_write_test";
     const FILE_PREFIX: &str = "write";
 
     fn cleanup() {
@@ -249,7 +253,7 @@ mod test {
             r.write(&0, &1, &2, &[2; 50]);
             r.flush();
         }
-        let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX).unwrap();
+        let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
         assert_eq!(message_file.files.len(), 2);
         let file = message_file.get_message_file(&1).unwrap();
         assert_eq!(file.file_id, 1);
@@ -257,5 +261,12 @@ mod test {
         let file = message_file.get_message_file(&2).unwrap();
         assert_eq!(file.file_id, 2);
         assert_eq!(file.message_id_start, 2);
+    }
+
+    #[test]
+    #[serial]
+    pub fn get_current_file_empty() {
+        remove_dir_all(FILE_STORAGE_DIRECTORY);
+        let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
     }
 }
