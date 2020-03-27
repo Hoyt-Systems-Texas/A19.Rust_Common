@@ -115,6 +115,29 @@ impl MessageWriteCollection {
         self.files.get(file_id)
     }
 
+    /// Used to get the current append file.
+    /// # Arguments
+    /// `max_message_id` - The maximum message id to stop at.
+    pub(crate) fn get_current_append<'a>(&'a mut self, max_message_id: u64) -> crate::file::Result<(MessageFileStoreWrite, &'a MessageFileInfo)> {
+        if self.files.is_empty() {
+            let (file_info, writer) = new_message_file(&self.file_storage_directory, &self.file_prefix, 1, max_message_id, self.file_size)?;
+            self.files.insert(1, file_info);
+            Ok((writer, self.files.get(&1).unwrap()))
+        } else {
+            let mut iter = self.files.iter().rev();
+            loop {
+                if let Some((_, file)) = iter.next() {
+                    let file: &MessageFileInfo = file;
+                    if file.message_id_start <= max_message_id {
+                        break Ok((file.open_write(&self.file_size)?, file))
+                    }
+                } else {
+                    panic!("Can't find a starting point!");
+                }
+            }
+        }
+    }
+
 }
 
 /// Used to crate a new message file.
@@ -268,5 +291,31 @@ mod test {
     pub fn get_current_file_empty() {
         remove_dir_all(FILE_STORAGE_DIRECTORY);
         let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    pub fn new_file_test() {
+        cleanup();
+        let mut message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
+        let writer = message_file.get_current_append(1).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    pub fn existing_file_test() {
+        cleanup();
+        {
+            let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
+            r.write(&0, &1, &1, &[2; 50]);
+            r.flush();
+
+            let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
+            r.write(&0, &1, &2, &[2; 50]);
+            r.flush();
+        }
+        let mut message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
+        let (writer, file) = message_file.get_current_append(1).unwrap();
+        assert_eq!(1, file.file_id);
     }
 }

@@ -52,6 +52,8 @@ pub struct IncomingMessageClient {
 /// `file_prefix` - The file prefix to use for the generated files.
 /// `file_size` - The size of the message file.
 /// `buffer_size` - The size of the buffer.
+/// # Returns
+/// A tuple containing the incoming message processor and the client to send messages to the cluster.
 pub(crate) fn create_incoming_message_processor(
     server_id: u32,
     file_storage_directory: &str,

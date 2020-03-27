@@ -1023,6 +1023,16 @@ pub(crate) struct MessageFileInfo {
     message_id_start: u64,
 }
 
+impl MessageFileInfo {
+    
+    /// Opens a file for writing.
+    /// # Arguments
+    /// `file_size` - The size of the file to open.  Only used if it doesn't exists.
+    pub(crate) fn open_write(&self, file_size: &usize) -> std::io::Result<MessageFileStoreWrite> {
+        unsafe {MessageFileStore::open_write(&self.path, *file_size)}
+    }
+}
+
 impl PartialOrd for MessageFileInfo {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
