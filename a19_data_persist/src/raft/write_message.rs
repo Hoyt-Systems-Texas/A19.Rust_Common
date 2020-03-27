@@ -246,7 +246,7 @@ mod test {
             r.flush();
 
             let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
-            r.write(&0, &2, &1, &[2; 50]);
+            r.write(&0, &1, &2, &[2; 50]);
             r.flush();
         }
         let message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX).unwrap();
