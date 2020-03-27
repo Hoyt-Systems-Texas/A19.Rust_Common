@@ -10,6 +10,7 @@ const SERVER_ID_SHIFT: usize = 54;
 const RANDOM_SHIFT: usize = 38;
 const RANDOM_SHIFT_MASK: u32 = 0x00_00_FF_FF;
 const SERVER_ID_MASK: u64 = 0b1111111111000000000000000000000000000000000000000000000000000000;
+const MSG_ID_MASK: u64    = 0b0000000000000000000000000011111111111111111111111111111111111111;
 
 #[derive(Debug, Clone)]
 pub(crate) enum IncomingEvt {
@@ -46,6 +47,10 @@ pub(crate) struct ImcomingMessageClient {
 }
 
 /// Creates the starting id for the server.  Uses a 16 bit random number to make the likelihood of it repeating on start very low.
+/// # Arguments
+/// `server_id` - The id of the server to generate the id for.
+/// # Returns
+/// The id of the server.
 fn create_start_id(server_id: u32) -> u64 {
     let server_id = (server_id as u64) << SERVER_ID_SHIFT;
     let mut rng = thread_rng();
@@ -53,12 +58,17 @@ fn create_start_id(server_id: u32) -> u64 {
     server_id + value
 }
 
+/// Used to get the id of the server.
+/// # Arguments
+/// `server_msg_id` - The if the server message to get the id for.
+/// # Returns
+/// The server id of the messaged.
 pub fn get_server_id_from_message(server_msg_id: &u64) -> u32 {
     ((server_msg_id & SERVER_ID_MASK) >> SERVER_ID_SHIFT) as u32
 }
 
-pub(crate) fn create_incoming_message(
-    server_id: &u32) {
+pub fn get_message_id_from_message(server_msg_id: &u64) -> u64 {
+    (server_msg_id & MSG_ID_MASK)
 }
 
 #[cfg(test)]
@@ -71,6 +81,7 @@ mod test {
         let server_id = 1;
         let start_id = create_start_id(server_id);
         assert_eq!(server_id, get_server_id_from_message(&start_id));
+        assert_eq!(0, get_message_id_from_message(&start_id));
     }
 }
 
