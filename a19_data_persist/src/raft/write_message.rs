@@ -106,6 +106,8 @@ impl MessageWriteCollection {
     /// Used to get a file with the specified id.
     /// # Arguments
     /// `file_id` - The id of the file to get.
+    /// # Returns
+    /// The file message file info.
     fn get_message_file<'a>(&'a self, file_id: &u32) -> Option<&'a MessageFileInfo> {
         self.files.get(file_id)
     }
@@ -170,7 +172,7 @@ fn get_message_file_info(path: &str) -> crate::file::Result<MessageFileInfo> {
 mod test {
     use std::fs::*;
     use std::path::Path;
-    use crate::raft::write::*;
+    use crate::raft::write_message::*;
     use serial_test::serial;
 
     const FILE_STORAGE_DIRECTORY: &str = "/home/mrh0057/cargo/tests/message_write_test";
@@ -253,7 +255,7 @@ mod test {
         assert_eq!(file.file_id, 1);
         assert_eq!(file.message_id_start, 1);
         let file = message_file.get_message_file(&2).unwrap();
-        assert_eq!(file.file_id, 1);
+        assert_eq!(file.file_id, 2);
         assert_eq!(file.message_id_start, 2);
     }
 }

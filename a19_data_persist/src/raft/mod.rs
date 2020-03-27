@@ -19,7 +19,7 @@
 //!
 pub mod network;
 pub mod state_machine;
-pub mod write;
+pub mod write_message;
 
 pub const EVENT_FILE_POSTFIX: &str = "events";
 pub const COMMIT_FILE_POSTIX: &str = "commit";
