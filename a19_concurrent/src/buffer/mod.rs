@@ -19,6 +19,19 @@ pub fn align(value: usize, alignment: usize) -> usize {
     (value + (alignment - 1)) & complement(alignment)
 }
 
+/// Used to find the next value.  This useful for appending on buffers.
+/// # Arguments
+/// `value` - The value to find the end of.
+/// `amount` - The amount of the value to pad.
+pub fn next_pos(value: usize, amount: usize) -> usize {
+    let diff = (value % amount);
+    if diff == 0 {
+        value
+    } else {
+        (amount - diff) + value
+    }
+}
+
 pub enum ByteOrderType {
     LittleEndian,
     BigEndian,
@@ -123,7 +136,7 @@ pub trait DirectByteBuffer {
 #[cfg(test)]
 mod test {
 
-    use crate::buffer::{align, complement};
+    use crate::buffer::{align, complement, next_pos};
 
     #[test]
     pub fn complement_test() {
@@ -145,5 +158,13 @@ mod test {
         assert_eq!(24, align(22, 8));
         assert_eq!(24, align(23, 8));
         assert_eq!(24, align(24, 8));
+    }
+
+    #[test]
+    pub fn next_pos_test() {
+        let result = 128;
+        assert_eq!(result, next_pos(97, 32));
+        assert_eq!(result, next_pos(127, 32));
+        assert_eq!(result, next_pos(128, 32));
     }
 }

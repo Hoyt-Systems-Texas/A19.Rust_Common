@@ -34,7 +34,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::buffer::{align, DirectByteBuffer};
+use a19_concurrent::buffer::{align, DirectByteBuffer, next_pos};
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
 use futures::channel::oneshot;
@@ -1712,7 +1712,7 @@ fn commit_thread_single(
                 let map = unsafe {
                     MemoryMappedInt::new(
                         &file_name,
-                        align(commit_file_size, COMMIT_SIZE as usize),
+                        next_pos(commit_file_size, COMMIT_SIZE as usize),
                     )
                     .unwrap()
                 };

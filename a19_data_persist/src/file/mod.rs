@@ -1,4 +1,4 @@
-use a19_concurrent::buffer::align;
+use a19_concurrent::buffer::{align, next_pos};
 use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
@@ -56,6 +56,11 @@ impl MessageFileStoreRead {
     pub fn read_section<'a>(&'a self, pos: &usize, length: &usize) -> Result<&'a [u8]> {
         let store = unsafe { &mut *self.store.get() };
         store.read_section(pos, length)
+    }
+
+    pub fn is_end(&self, pos: &usize) -> bool {
+        let store = unsafe { &mut *self.store.get() };
+        store.is_end(pos)
     }
 }
 
@@ -134,7 +139,7 @@ impl MessageFileStore {
         file_size: usize,
     ) -> std::io::Result<(MessageFileStoreRead, MessageFileStoreWrite)> {
         // Need to make sure the file size is aligned correctly.
-        let buffer = MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?;
+        let buffer = MemoryMappedInt::new(path, next_pos(file_size, ALIGNMENT))?;
         let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
         Ok((
@@ -186,7 +191,7 @@ impl MessageFileStore {
                 .write(true)
                 .create(true)
                 .open(path)?;
-            MemoryMappedInt::new(path, align(file_size, ALIGNMENT))?
+            MemoryMappedInt::new(path, next_pos(file_size, ALIGNMENT))?
         };
         let file_store = MessageFileStore { buffer };
         let cell = Arc::new(UnsafeCell::new(file_store));
@@ -295,7 +300,11 @@ pub trait MessageStore {
     ) -> Result<usize>;
 
     /// Used to read in a section.
+    /// # Arguments
+    /// `pos` - The position to start reading.
     fn read_section<'a>(&'a self, pos: &usize, length: &usize) -> Result<&'a [u8]>;
+
+    fn is_end(&self, pos: &usize) -> bool;
 }
 
 impl MessageFileStore {
@@ -378,20 +387,29 @@ impl<'a> MessageRead<'a> {
         }
     }
 
+    #[inline]
     pub fn msgTypeId(&self) -> MessageTypeId {
         self.msg_type_id
     }
 
+    #[inline]
     pub fn messageId(&self) -> MessageId {
         self.message_id
     }
 
+    #[inline]
     pub fn bytes(&'a self) -> &'a [u8] {
         self.bytes
     }
 
+    #[inline]
     pub fn next_pos(&self) -> usize {
         self.next_pos
+    }
+
+    #[inline]
+    pub fn is_end(&self) -> bool {
+        self.is_end()
     }
 }
 
@@ -422,7 +440,7 @@ impl MessageStore for MessageFileStore {
             if size == 0 {
                 Err(Error::NoMessage)
             } else {
-                let aligned = align(size as usize, ALIGNMENT);
+                let aligned = next_pos(size as usize, ALIGNMENT);
                 // Check to see if we have enough space.
                 let remaining = self.buffer.capacity() - *pos;
                 if remaining < aligned {
@@ -472,8 +490,10 @@ impl MessageStore for MessageFileStore {
             let size = self.buffer.get_u32(pos);
             if size == 0 {
                 Err(Error::NoMessage)
+            } else if self.is_end(pos) {
+                Err(Error::Full)
             } else {
-                let aligned = align(size as usize, ALIGNMENT);
+                let aligned = next_pos(size as usize, ALIGNMENT);
                 // Check to see if we have enough space.
                 let remaining = self.buffer.capacity() - *pos;
                 if remaining < aligned {
@@ -513,8 +533,8 @@ impl MessageStore for MessageFileStore {
         let mut start_message_id = 0;
         let mut last_message_id = 0;
         loop {
-            let size = align(self.buffer.get_u32(&current_pos) as usize, HEADER_SIZE);
-            if size == 0 || size + length > *max_length {
+            let size = next_pos(self.buffer.get_u32(&current_pos) as usize, HEADER_SIZE);
+            if size == 0 || self.is_end(&current_pos) || size + length > *max_length {
                 if length == 0 {
                     break Err(Error::NoMessage);
                 } else {
@@ -552,6 +572,15 @@ impl MessageStore for MessageFileStore {
         }
     }
 
+    fn is_end(&self, pos: &usize) -> bool {
+        let next = pos + HEADER_SIZE;
+        if next < self.size() {
+            self.buffer.get_u32(pos) == std::u32::MAX
+        } else {
+            true
+        }
+    }
+
     /// Writes a message to the buffer.
     /// # Arguments
     /// `posiiton` - The position to write to the buffer.
@@ -567,10 +596,24 @@ impl MessageStore for MessageFileStore {
         buffer: &[u8],
     ) -> Result<usize> {
         let size = HEADER_SIZE + buffer.len();
-        let aligned = align(size, ALIGNMENT); // This is the aligned value at 32 bits
+        let aligned = next_pos(size, ALIGNMENT); // This is the aligned value at 32 bits
         if self.size() < *position {
             Err(Error::PositionOutOfRange(*position))
         } else if aligned > (self.size() - *position) {
+            // TODO make it full and write all 00s
+            let ones = [255; 1000];
+            let mut bucket = self.size() - *position;
+            let mut pos = *position;
+            loop {
+                if bucket > 1000 {
+                    self.buffer.write_bytes(&pos, &ones[..]);
+                    bucket -= 1000;
+                    pos += 1000;
+                } else {
+                    self.buffer.write_bytes(&pos, &ones[0..bucket]);
+                    break;
+                }
+            }
             Err(Error::Full)
         } else {
             let message_id_pos = MessageFileStore::calculate_message_id_pos(position);

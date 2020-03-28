@@ -7,7 +7,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::buffer::{align, DirectByteBuffer};
+use a19_concurrent::buffer::{align, DirectByteBuffer, next_pos};
 use a19_concurrent::queue::mpsc_queue::MpscQueueWrap;
 use a19_concurrent::queue::skip_queue::SkipQueueReader;
 use a19_concurrent::queue::spsc_queue::SpscQueueSendWrap;
@@ -201,7 +201,7 @@ fn create_state_machine(
             let map = unsafe {
                 MemoryMappedInt::new(
                     &file_name,
-                    align(commit_file_size, COMMIT_SIZE as usize),
+                    next_pos(commit_file_size, COMMIT_SIZE as usize),
                 )
                 .unwrap()
             };

@@ -118,6 +118,8 @@ impl MessageWriteCollection {
     /// Used to get the current append file.
     /// # Arguments
     /// `max_message_id` - The maximum message id to stop at.
+    /// # Returns
+    /// A tuple containing the file to write to and the message file information.
     pub(crate) fn get_current_append<'a>(&'a mut self, max_message_id: u64) -> crate::file::Result<(MessageFileStoreWrite, &'a MessageFileInfo)> {
         if self.files.is_empty() {
             let (file_info, writer) = new_message_file(&self.file_storage_directory, &self.file_prefix, 1, max_message_id, self.file_size)?;
@@ -137,7 +139,66 @@ impl MessageWriteCollection {
             }
         }
     }
+}
 
+struct MessageWriteAppend {
+    writer: MessageFileStoreWrite,
+    next_pos: usize,
+}
+
+enum OpenFileResult {
+    Full,
+    Opened(MessageWriteAppend),
+}
+
+impl MessageWriteAppend {
+    
+    /// Used to open file at the end of the position.
+    /// # Arguments
+    /// `path` - The path of the file to open.
+    /// `last_committed_id` - The last committed id.
+    /// `writer` - The writer associated with the file.
+    /// # Returns
+    /// Either the message append or full.  If its full need to go to the next file.
+    fn open(path: &str, last_commited_id: u64, writer: MessageFileStoreWrite) -> crate::file::Result<OpenFileResult> {
+        let mut pos = 0;
+        let buffer = unsafe {MessageFileStore::open_readonly(&path)?};
+        loop {
+            match buffer.read_new(&pos) {
+                Ok(msg) => {
+                    if msg.messageId() == last_commited_id {
+                        pos = msg.next_pos();
+                        if buffer.is_end(&pos) {
+                            break Ok(OpenFileResult::Full)
+                        } else {
+                            break Ok(OpenFileResult::Opened(Self {
+                                writer,
+                                next_pos: pos,
+                            }))
+                        }
+                    } else if msg.messageId() == std::u64::MAX {
+                        break Ok(OpenFileResult::Full)
+                    } else {
+                        pos = msg.next_pos();
+                    }
+                }
+                Err(e) => match e {
+                    crate::file::Error::NoMessage => {
+                        break Ok(OpenFileResult::Opened(Self {
+                            writer,
+                            next_pos: pos
+                        }))
+                    },
+                    crate::file::Error::PositionOutOfRange(_) => {
+                        break Ok(
+                            OpenFileResult::Full
+                        )
+                    }
+                    _ => Err(e)?,
+                },
+            }
+        }
+    }
 }
 
 /// Used to crate a new message file.
@@ -298,7 +359,8 @@ mod test {
     pub fn new_file_test() {
         cleanup();
         let mut message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
-        let writer = message_file.get_current_append(1).unwrap();
+        let (writer, file) = message_file.get_current_append(1).unwrap();
+        assert_eq!(1, file.file_id);
     }
 
     #[test]
@@ -317,5 +379,43 @@ mod test {
         let mut message_file = MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000).unwrap();
         let (writer, file) = message_file.get_current_append(1).unwrap();
         assert_eq!(1, file.file_id);
+    }
+
+    #[test]
+    #[serial]
+    pub fn open_file_test() {
+        cleanup();
+        let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
+        r.write(&0, &1, &1, &[2; 50]);
+        r.flush();
+        let writer = MessageWriteAppend::open(&file_info.path, 1, r).unwrap();
+        match writer {
+            OpenFileResult::Full => {
+                assert!(false)
+            }
+            OpenFileResult::Opened(append) => {
+                assert!(append.next_pos > 0)
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    pub fn open_file_full_test() {
+        cleanup();
+        let buffer = [2; 31960];
+        let (file_info, r) = new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 100).unwrap();
+        let next_pos = r.write(&0, &1, &1, &[2; 3150]).unwrap();
+        r.write(&next_pos, &1, &2, &[2; 30]);
+        r.flush();
+        let writer = MessageWriteAppend::open(&file_info.path, 1, r).unwrap();
+        match writer {
+            OpenFileResult::Full => {
+                
+            }
+            OpenFileResult::Opened(a) => {
+                assert_eq!(0, a.next_pos);
+            }
+        }
     }
 }

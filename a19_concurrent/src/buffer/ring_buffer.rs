@@ -1,5 +1,5 @@
 use crate::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
-use crate::buffer::{align, DirectByteBuffer};
+use crate::buffer::{align, DirectByteBuffer, next_pos};
 use crate::queue::PaddedUsize;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{fence, Ordering};
@@ -186,7 +186,7 @@ impl RingBuffer for ManyToOneBufferInt {
             None
         } else {
             let record_length: usize = buffer.len() + HEADER_SIZE;
-            let required_capacity = align(record_length, ALIGNMENT);
+            let required_capacity = next_pos(record_length, ALIGNMENT);
             let index = self.claim_capacity(required_capacity);
             match index {
                 Some(i) => {
@@ -228,7 +228,7 @@ impl RingBuffer for ManyToOneBufferInt {
                 if record_length <= 0 {
                     break;
                 } else {
-                    bytes_read += align(record_length as usize, ALIGNMENT);
+                    bytes_read += next_pos(record_length as usize, ALIGNMENT);
 
                     let message_type = self.buffer.get_i32(&message_type_offset(&record_index));
                     if message_type == PADDING_MESSAGE_TYPE {
