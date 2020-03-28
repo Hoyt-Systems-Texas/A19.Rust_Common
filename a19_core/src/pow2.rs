@@ -19,7 +19,7 @@ impl PowOf2 for u64 {
         x |= x >> 4;
         x |= x >> 8;
         x |= x >> 16;
-        (x + 1)
+        x + 1
     }
 
     fn is_power_of_2(&self) -> bool {
@@ -42,7 +42,7 @@ impl PowOf2 for usize {
         x |= x >> 4;
         x |= x >> 8;
         x |= x >> 16;
-        (x + 1)
+        x + 1
     }
 
     fn is_power_of_2(&self) -> bool {

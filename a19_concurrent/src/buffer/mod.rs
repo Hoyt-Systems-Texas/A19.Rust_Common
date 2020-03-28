@@ -24,7 +24,7 @@ pub fn align(value: usize, alignment: usize) -> usize {
 /// `value` - The value to find the end of.
 /// `amount` - The amount of the value to pad.
 pub fn next_pos(value: usize, amount: usize) -> usize {
-    let diff = (value % amount);
+    let diff = value % amount;
     if diff == 0 {
         value
     } else {

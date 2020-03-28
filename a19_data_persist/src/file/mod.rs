@@ -1,7 +1,7 @@
 use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
-use a19_concurrent::buffer::{align, next_pos};
+use a19_concurrent::buffer::next_pos;
 use std::cell::UnsafeCell;
 use std::fs::OpenOptions;
 use std::path::Path;
@@ -390,12 +390,12 @@ impl<'a> MessageRead<'a> {
     }
 
     #[inline]
-    pub fn msgTypeId(&self) -> MessageTypeId {
+    pub fn msg_type_id(&self) -> MessageTypeId {
         self.msg_type_id
     }
 
     #[inline]
-    pub fn messageId(&self) -> MessageId {
+    pub fn message_id(&self) -> MessageId {
         self.message_id
     }
 

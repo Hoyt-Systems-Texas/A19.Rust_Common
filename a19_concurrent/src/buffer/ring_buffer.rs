@@ -1,5 +1,5 @@
 use crate::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
-use crate::buffer::{align, DirectByteBuffer, next_pos};
+use crate::buffer::{DirectByteBuffer, next_pos};
 use crate::queue::PaddedUsize;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{fence, Ordering};

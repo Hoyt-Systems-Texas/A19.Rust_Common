@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// Used for when we are the leader and appending messages.
+#[allow(dead_code)]
 pub(crate) struct MessageWriteFileAppend {
     file_storage_directory: String,
     file_prefix: String,
@@ -14,6 +15,7 @@ pub(crate) struct MessageWriteFileAppend {
     writer: MessageWriteAppend,
 }
 
+#[allow(dead_code)]
 impl MessageWriteFileAppend {
     /// The file directory to open.
     /// # Arguments
@@ -24,12 +26,14 @@ impl MessageWriteFileAppend {
 }
 
 /// Used for random writes.
+#[allow(dead_code)]
 pub(crate) struct MessageWriteFileSeek {
     path: String,
     file_id: u32,
     writer: MessageFileStoreWrite,
 }
 
+#[allow(dead_code)]
 pub(crate) struct MessageWriteCollection {
     /// The collection of files.
     files: BTreeMap<u32, Rc<MessageFileInfo>>,
@@ -202,7 +206,7 @@ impl MessageWriteAppend {
         loop {
             match buffer.read_new(&pos) {
                 Ok(msg) => {
-                    if msg.messageId() >= last_commited_id {
+                    if msg.message_id() >= last_commited_id {
                         pos = msg.next_pos();
                         if buffer.is_end(&pos) {
                             break Ok(OpenFileResult::Full);
@@ -214,7 +218,7 @@ impl MessageWriteAppend {
                                 message_file_info: msg_file,
                             }));
                         }
-                    } else if msg.messageId() == std::u64::MAX {
+                    } else if msg.message_id() == std::u64::MAX {
                         break Ok(OpenFileResult::Full);
                     } else {
                         pos = msg.next_pos();
@@ -307,9 +311,9 @@ mod test {
     fn cleanup() {
         let path = Path::new(FILE_STORAGE_DIRECTORY);
         if path.exists() {
-            remove_dir_all(&path);
+            remove_dir_all(&path).unwrap();
         }
-        create_dir(&path);
+        create_dir(&path).unwrap();
     }
 
     #[test]
@@ -336,7 +340,7 @@ mod test {
         cleanup();
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-        r.write(&0, &1, &1, &[2; 50]);
+        r.write(&0, &1, &1, &[2; 50]).unwrap();
         match new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000) {
             Ok(_) => assert!(false),
             Err(e) => match e {
@@ -357,8 +361,8 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]);
-            r.flush();
+            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.flush().unwrap();
         }
         let path = create_commit_name(FILE_STORAGE_DIRECTORY, FILE_PREFIX, &1);
         let file_info = get_message_file_info(&path).unwrap();
@@ -374,13 +378,13 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]);
-            r.flush();
+            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.flush().unwrap();
 
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &2, &[2; 50]);
-            r.flush();
+            r.write(&0, &1, &2, &[2; 50]).unwrap();
+            r.flush().unwrap();
         }
         let message_file =
             MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000)
@@ -397,7 +401,7 @@ mod test {
     #[test]
     #[serial]
     pub fn get_current_file_empty() {
-        remove_dir_all(FILE_STORAGE_DIRECTORY);
+        remove_dir_all(FILE_STORAGE_DIRECTORY).unwrap();
         let message_file =
             MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000)
                 .unwrap();
@@ -421,13 +425,13 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]);
-            r.flush();
+            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.flush().unwrap();
 
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &2, &[2; 50]);
-            r.flush();
+            r.write(&0, &1, &2, &[2; 50]).unwrap();
+            r.flush().unwrap();
         }
         let mut message_file =
             MessageWriteCollection::open_dir(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 32 * 1000)
@@ -442,8 +446,8 @@ mod test {
         cleanup();
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-        r.write(&0, &1, &1, &[2; 50]);
-        r.flush();
+        r.write(&0, &1, &1, &[2; 50]).unwrap();
+        r.flush().unwrap();
         let writer = MessageWriteAppend::open(Rc::new(file_info), 1, r).unwrap();
         match writer {
             OpenFileResult::Full => assert!(false),
@@ -459,8 +463,8 @@ mod test {
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 100).unwrap();
         let next_pos = r.write(&0, &1, &1, &[2; 3150]).unwrap();
-        r.write(&next_pos, &1, &2, &[2; 30]);
-        r.flush();
+        r.write(&next_pos, &1, &2, &[2; 30]).unwrap_or_default();
+        r.flush().unwrap();
         let writer = MessageWriteAppend::open(Rc::new(file_info), 1, r).unwrap();
         match writer {
             OpenFileResult::Full => {}

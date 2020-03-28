@@ -1,5 +1,4 @@
 use flatc_rust;
-use std::env;
 use std::path::Path;
 
 fn main() {

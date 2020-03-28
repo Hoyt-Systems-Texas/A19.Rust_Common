@@ -1,12 +1,11 @@
-use crate::file;
 use crate::raft::network::{NetworkSend, NetworkSendType};
 use crate::raft::*;
 use crate::raft::{CommitFile, TermFile};
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
-    create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
+    ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::buffer::{align, next_pos, DirectByteBuffer};
+use a19_concurrent::buffer::next_pos;
 use a19_concurrent::queue::mpsc_queue::MpscQueueWrap;
 use a19_concurrent::queue::skip_queue::SkipQueueReader;
 use a19_concurrent::queue::spsc_queue::SpscQueueSendWrap;
@@ -19,9 +18,9 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 /// The internal message id.
-pub const internal_message_id: i32 = 1000;
+pub const INTERNAL_MESSAGE_ID: i32 = 1000;
 /// A message to indicate a snapshot should be taken.
-pub const create_snapshot: i32 = 1001;
+pub const CREATE_SNAPSHOT: i32 = 1001;
 
 /// Internal messages that are committed as terms.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -743,7 +742,7 @@ mod test {
     #[test]
     #[serial]
     fn test_leader_timeout() {
-        let (mut state_machine, mut net) = create_state_machine();
+        let (mut state_machine, net) = create_state_machine();
         state_machine.process_event(RaftEvent::ElectedLeader { server_id: 2 });
         state_machine.process_event(RaftEvent::LeaderTimeout);
         if let Some(top) = net.net_reader.poll() {

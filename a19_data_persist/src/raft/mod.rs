@@ -34,7 +34,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::buffer::{align, next_pos, DirectByteBuffer};
+use a19_concurrent::buffer::{next_pos, DirectByteBuffer};
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
 use futures::channel::oneshot;
@@ -49,14 +49,16 @@ use std::sync::atomic::{AtomicU64, AtomicU8};
 use std::sync::{atomic, Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::vec::Vec;
 
+#[allow(unused_attributes)]
 #[path = "../target/a19_data_persist/message/persisted_file_generated.rs"]
 
 pub type QueueFuture<TOUT> = oneshot::Receiver<TOUT>;
 
 /// Represents a message that was read in.
+#[allow(dead_code)]
 pub struct MessageInfo<'a> {
     message_id: u64,
     time_ms: i64,
@@ -64,6 +66,7 @@ pub struct MessageInfo<'a> {
     message_body: &'a [u8],
 }
 
+#[allow(dead_code)]
 struct FileWriteInfo {
     file_id: u32,
     position: usize,
@@ -386,6 +389,7 @@ pub struct TermCommit {
 }
 
 /// The state of the raft node.
+#[allow(dead_code)]
 enum RaftNodeState {
     /// The node is currently in a follower type and is copying messages to the buffer.
     Follower(PersistedCommitStreamFollower),
@@ -398,6 +402,7 @@ enum RaftNodeState {
 }
 
 /// The events for the raft protocol.
+#[allow(dead_code)]
 enum RaftNodeEvent {
     ElectionTimeout = 0,
     NewTerm = 1,
@@ -412,11 +417,13 @@ pub trait MessageProcessor: Send {
     fn handle<'a>(&mut self, read: &MessageRead<'a>);
 }
 
+#[allow(dead_code)]
 struct MessageWriter {
     buffer: MessageFileStoreWrite,
     file_id: u32,
 }
 
+#[allow(dead_code)]
 struct MessageReader {
     buffer: MessageFileStoreRead,
     file_id: u32,
@@ -485,9 +492,9 @@ impl PersistedMessageWriteStream {
 
     /// Writes to the file at a specified position.  Is done when copying the files.
     /// # Arguments
+    #[allow(dead_code)]
     fn write_pos(
         &mut self,
-        file_id: &usize,
         pos: &usize,
         msg_type: &i32,
         msg_id: &u64,
@@ -629,11 +636,11 @@ where
     fn process_next(&mut self) -> file::Result<bool> {
         match self.buffer.read_new(&self.current_pos) {
             Ok(msg) => {
-                if msg.messageId() <= self.max_message_id.load(atomic::Ordering::Relaxed) {
+                if msg.message_id() <= self.max_message_id.load(atomic::Ordering::Relaxed) {
                     self.current_pos = msg.next_pos();
                     self.message_processor.handle(&msg);
                     Ok(true)
-                } else if msg.messageId() == std::u64::MAX {
+                } else if msg.message_id() == std::u64::MAX {
                     self.switch_to_next_buffer()?;
                     Ok(true)
                 } else {
@@ -692,11 +699,11 @@ fn find_message(
     loop {
         match buffer.read_new(&pos) {
             Ok(msg) => {
-                if msg.messageId() == 0 {
+                if msg.message_id() == 0 {
                     break Ok(FindMessageResult::End(pos));
-                } else if msg.messageId() == std::u64::MAX {
+                } else if msg.message_id() == std::u64::MAX {
                     break Ok(FindMessageResult::EndOfFile);
-                } else if msg.messageId() >= msg_id {
+                } else if msg.message_id() >= msg_id {
                     break Ok(FindMessageResult::Found(pos));
                 } else {
                     pos = msg.next_pos()
@@ -730,13 +737,13 @@ fn find_end_of_buffer(buffer: &MessageFileStoreRead) -> crate::file::Result<Find
     loop {
         match buffer.read_new(&pos) {
             Ok(msg) => {
-                if msg.messageId() == 0 {
+                if msg.message_id() == 0 {
                     break Ok(FindEmptySlotResult::Pos(pos, last_id));
-                } else if msg.messageId() == std::u64::MAX {
+                } else if msg.message_id() == std::u64::MAX {
                     break Ok(FindEmptySlotResult::Full(last_id));
                 } else {
                     pos = msg.next_pos();
-                    last_id = msg.messageId();
+                    last_id = msg.message_id();
                 }
             }
             Err(e) => match e {
@@ -803,6 +810,7 @@ impl TermFile {
     }
 }
 
+#[allow(dead_code)]
 pub struct PersistedCommitStreamLeader {
     /// The current commit file.
     commit_file: Rc<Cell<TermFile>>,
@@ -815,6 +823,7 @@ pub struct PersistedCommitStreamLeader {
     buffer: MessageFileStoreRead,
 }
 
+#[allow(dead_code)]
 pub struct PersistedCommitSingleNode {
     /// The current commit file.
     commit_file: Rc<TermFile>,
@@ -833,6 +842,7 @@ pub struct PersistedCommitSingleNode {
 }
 
 impl PersistedCommitSingleNode {
+    #[allow(dead_code)]
     fn new(
         commit_file: Rc<TermFile>,
         new_term_file: Rc<TermFile>,
@@ -855,6 +865,7 @@ impl PersistedCommitSingleNode {
 }
 
 /// Represents the commit stream.
+#[allow(dead_code)]
 pub struct PersistedCommitStreamFollower {
     /// The file we are currently commit messages to.
     commit_file: Rc<Cell<TermFile>>,
@@ -919,6 +930,7 @@ impl AddMessageCommit {
 /// The persisted file.
 pub struct PersistedMessageFile {
     /// The maximum file size before it roles overs.
+    #[allow(dead_code)]
     max_file_size: usize,
     /// The thread that processes the commit.
     commit_join: Option<JoinHandle<u32>>,
@@ -933,10 +945,13 @@ pub struct PersistedMessageFile {
     /// The incoming reader queue that contains the messages to complete.
     incoming_queue_writer: MpscQueueWrap<AddMessageWriteRs>,
     /// The current maximum message id that has been processed.
+    #[allow(dead_code)]
     max_message_id: Arc<AtomicU64>,
     /// The directory to store the files.
+    #[allow(dead_code)]
     file_storage_directory: String,
     /// The prefix for the fille storage.
+    #[allow(dead_code)]
     file_prefix: String,
 }
 
@@ -1108,8 +1123,10 @@ pub struct FileCollection {
     /// A map of the message files.
     message_files: Arc<Mutex<Vec<MessageFileInfo>>>,
     /// The storage directory for the files.
+    #[allow(dead_code)]
     file_storage_directory: String,
     /// The prefix for the files
+    #[allow(dead_code)]
     file_prefix: String,
 }
 
@@ -1123,6 +1140,7 @@ pub struct MessageIterator {
     max_commit_id: u64,
     message_files: Arc<Mutex<Vec<MessageFileInfo>>>,
     number: u32,
+    #[allow(dead_code)]
     start_message_id: u64,
     pos: usize,
 }
@@ -1145,6 +1163,7 @@ impl MessageIterator {
     /// `start_message_id` - The starting message id.
     /// `max_commit_id` - The maximum id that has been commited.
     /// `message_files` - The files containing the messages.
+    #[allow(dead_code)]
     fn new(
         number: u32,
         start_message_id: u64,
@@ -1156,7 +1175,7 @@ impl MessageIterator {
         let mut pos = 0;
         loop {
             let msg = reader.read_new(&pos)?;
-            if msg.messageId() >= start_message_id || msg.messageId() == 0 {
+            if msg.message_id() >= start_message_id || msg.message_id() == 0 {
                 break;
             } else {
                 pos = msg.next_pos();
@@ -1177,6 +1196,7 @@ impl MessageIterator {
     /// # Arguments
     /// `message_files` - The message file to search.
     /// `start_message_id` - The starting message id.
+    #[allow(dead_code)]
     fn find_starting_file(
         message_files: Arc<Mutex<Vec<MessageFileInfo>>>,
         start_message_id: u64,
@@ -1201,7 +1221,7 @@ impl MessageIterator {
         } else {
             match self.current_reader.read_new(&self.pos) {
                 Ok(reader) => {
-                    if reader.messageId() <= self.max_commit_id {
+                    if reader.message_id() <= self.max_commit_id {
                         self.pos = reader.next_pos();
                         self.number = self.number - 1;
                         Ok(NextResult::Some(reader))
@@ -1661,7 +1681,7 @@ fn write_thread_single(
                                                 value.complete,
                                             );
                                             if !commit_writer.offer(message) {
-                                                thread::sleep_ms(2);
+                                                thread::sleep(Duration::from_millis(1));
                                             }
                                         }
                                         None => {}
@@ -1672,7 +1692,7 @@ fn write_thread_single(
                         }
                     }
                 } else {
-                    thread::sleep_ms(1);
+                    thread::sleep(Duration::from_millis(1));
                 }
             }
         }
@@ -1860,16 +1880,16 @@ fn commit_thread_single(
                                         }
                                         Err(e) => {
                                             // Spin
-                                            thread::sleep_ms(10);
+                                            thread::sleep(Duration::from_millis(10));
                                         }
                                     }
                                 }
                                 file::Error::FileError(e) => {
                                     // Spin
-                                    thread::sleep_ms(100);
+                                    thread::sleep(Duration::from_millis(100));
                                 }
                                 file::Error::NoMessage => {
-                                    thread::sleep_ms(2);
+                                    thread::sleep(Duration::from_millis(2));
                                 }
                                 file::Error::PositionOutOfRange(pos) => {
                                     // Next file
@@ -1885,7 +1905,7 @@ fn commit_thread_single(
                                         }
                                         Err(e) => {
                                             // Spin
-                                            thread::sleep_ms(10);
+                                            thread::sleep(Duration::from_millis(10));
                                         }
                                     }
                                 }
@@ -1944,8 +1964,8 @@ where
             } else {
                 match read.read_new(&read_pos) {
                     Ok(result) => {
-                        if result.msgTypeId() > 0 {
-                            if result.messageId() <= max_message_id.load(atomic::Ordering::Relaxed)
+                        if result.msg_type_id() > 0 {
+                            if result.message_id() <= max_message_id.load(atomic::Ordering::Relaxed)
                             {
                                 message_processor.handle(&result);
                                 loop {
@@ -1955,7 +1975,7 @@ where
                                             if t.is_processed(&read_pos, &read_file_id) {
                                                 match pending_commit_queue.poll() {
                                                     Some(f) => {
-                                                        f.complete.send(Ok(()));
+                                                        f.complete.send(Ok(())).unwrap_or_default();
                                                     }
                                                     None => {
                                                         panic!("Something took the value from the peek.");
@@ -2156,12 +2176,12 @@ impl PersistedMessageFile {
             Some(p) => {
                 let add_message = AddMessageWriteRs::new(p, sender);
                 if !self.incoming_queue_writer.offer(add_message) {
-                    thread::sleep_ms(2);
+                    thread::sleep(Duration::from_millis(1));
                 }
                 receiver
             }
             None => {
-                sender.send(Err(file::Error::Full));
+                sender.send(Err(file::Error::Full)).unwrap_or_default();
                 receiver
             }
         }
@@ -2189,10 +2209,6 @@ mod tests {
     const TEST_PREFIX: &str = "test_persist";
 
     /// Used to crate the directory to test with.
-    fn create_dir(name: &str) -> String {
-        format!("{}_{}", TEST_DIR, name)
-    }
-
     #[test]
     pub fn load_current_file_test() {
         let path = Path::new(TEST_DIR);
@@ -2209,13 +2225,6 @@ mod tests {
         assert_eq!(files.message_files.lock().unwrap().len(), 1);
 
         let mut other_files = load_current_files(TEST_PREFIX, TEST_DIR).unwrap();
-    }
-
-    fn clean_dir() {
-        let path = Path::new(TEST_DIR);
-        if path.exists() && path.is_dir() {
-            remove_dir_all(TEST_DIR).unwrap();
-        }
     }
 
     #[test]
@@ -2295,7 +2304,7 @@ mod tests {
         );
         let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
         let r = single_node.write(1, &bytes[0..8]).await;
-        r.unwrap();
+        r.unwrap().unwrap();
         single_node.stop();
     }
 
@@ -2318,7 +2327,7 @@ mod tests {
     impl MessageProcessor for MessageProcessorInt {
         fn handle<'a>(&mut self, read: &MessageRead<'a>) {
             self.ran = true;
-            self.last_message_id = read.messageId();
+            self.last_message_id = read.message_id();
         }
     }
 }

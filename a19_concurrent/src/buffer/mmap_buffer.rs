@@ -4,7 +4,6 @@ use crate::buffer::atomic_buffer::{
 use crate::buffer::DirectByteBuffer;
 use byteorder::{BigEndian, ByteOrder};
 use memmap::MmapMut;
-use std::cell::UnsafeCell;
 use std::fs::{File, OpenOptions};
 use std::io::Result;
 use std::path::Path;

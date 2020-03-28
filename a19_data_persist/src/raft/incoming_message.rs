@@ -1,15 +1,14 @@
 use crate::raft::write_message::*;
-use crate::raft::*;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use rand::{thread_rng, RngCore};
-use std::sync::atomic::{AtomicU32, AtomicU64};
-use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 const SERVER_ID_SHIFT: usize = 54;
+#[allow(dead_code)]
 const RANDOM_SHIFT: usize = 38;
+#[allow(dead_code)]
 const RANDOM_SHIFT_MASK: u32 = 0x00_00_FF_FF;
 const SERVER_ID_MASK: u64 = 0b1111111111000000000000000000000000000000000000000000000000000000;
 const MSG_ID_MASK: u64 = 0b0000000000000000000000000011111111111111111111111111111111111111;
@@ -207,6 +206,7 @@ mod test {
     };
     use serial_test::serial;
     use std::fs::*;
+    use std::path::*;
 
     const FILE_STORAGE_DIRECTORY: &str = "../../../cargo/tests/a19_data_persisted_incoming/";
     const FILE_PREFIX: &str = "incoming";
@@ -214,7 +214,7 @@ mod test {
     fn clean() {
         let path = Path::new(FILE_STORAGE_DIRECTORY);
         if path.exists() {
-            remove_dir_all(FILE_STORAGE_DIRECTORY);
+            remove_dir_all(FILE_STORAGE_DIRECTORY).unwrap();
         }
     }
 
@@ -249,7 +249,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            (32 * 1000) as usize,
             &(32 * 1000 as usize),
         );
 
@@ -268,7 +268,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            (32 * 1000) as usize,
             &(32 * 1000 as usize),
         );
 

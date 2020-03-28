@@ -307,15 +307,10 @@
 use crate::file::MessageFileStoreRead;
 use crate::raft::state_machine::{RaftEvent, RaftStateMachineClient};
 use a19_concurrent::buffer::align;
-use a19_concurrent::buffer::ring_buffer::{
-    create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
-};
-use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
+use a19_concurrent::queue::spsc_queue::SpscQueueReceiveWrap;
 use byteorder::{BigEndian, ByteOrder};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
-use zmq::{Message, Socket};
+use zmq::Socket;
 
 /// The size of the header.
 const HEADER_SIZE: usize = 32;
@@ -363,7 +358,7 @@ const STOP_FLAGS: usize = 7;
 #[allow(dead_code)]
 const POS_TYPE: usize = 7;
 #[allow(dead_code)]
-const STOP_type: usize = 9;
+const STOP_TYPE: usize = 9;
 #[allow(dead_code)]
 const POS_SERVER: usize = 9;
 #[allow(dead_code)]
@@ -459,7 +454,7 @@ impl RaftEventEncoder {
     }
 
     fn write_type(&mut self, type_id: i16) {
-        BigEndian::write_i16(&mut self.msg_buffer[POS_TYPE..STOP_type], type_id);
+        BigEndian::write_i16(&mut self.msg_buffer[POS_TYPE..STOP_TYPE], type_id);
     }
 
     /// Writes the raft event to the buffer.  If the event isn't suppose to be sent over the wire false is returned.
@@ -568,7 +563,7 @@ impl RaftDataFrame {
         };
         BigEndian::write_u32(&mut s.msg_buffer[POS_SERVER..STOP_SERVER], server_id);
         s.msg_buffer[4] = CURRENT_VERSION;
-        BigEndian::write_i16(&mut s.msg_buffer[POS_TYPE..STOP_type], DATA_FRAME);
+        BigEndian::write_i16(&mut s.msg_buffer[POS_TYPE..STOP_TYPE], DATA_FRAME);
         s
     }
 

@@ -1,8 +1,5 @@
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
-use std::ops::DerefMut;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -57,7 +54,7 @@ pub fn create_mrsw_collection<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>>(
 ) {
     let mut con1 = CollectionContainer::new(col1, READER, 1024);
     let mut con2 = CollectionContainer::new(col2, WRITER, 1024);
-    let mut col = MrswCollection {
+    let col = MrswCollection {
         current_reader: AtomicPtr::new(&mut con1),
         current_writer: AtomicPtr::new(&mut con2),
         col1: con1,
@@ -81,9 +78,9 @@ pub struct MrswCollectionReader<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> {
 }
 
 impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollectionReader<COL, EVENT, CHANGE> {
-    pub fn get<f, r>(&self, act: f) -> r
+    pub fn get<F, R>(&self, act: F) -> R
     where
-        f: FnOnce(&COL) -> r,
+        F: FnOnce(&COL) -> R,
     {
         let v = unsafe { &mut *self.map.get() };
         v.get(act)
