@@ -1,32 +1,62 @@
-use a19_concurrent::queue::mpsc_queue::{MpscQueueWrap, MpscQueueReceive};
-use a19_concurrent::buffer::ring_buffer::{ManyToOneBufferWriter, ManyToOneBufferReader, create_many_to_one};
-use std::sync::Arc;
-use std::sync::atomic::{ AtomicU32, AtomicU64 };
-use crate::raft::*;
 use crate::raft::write_message::*;
+use crate::raft::*;
+use a19_concurrent::buffer::ring_buffer::{
+    create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
+};
+use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use rand::{thread_rng, RngCore};
+use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::Arc;
 
 const SERVER_ID_SHIFT: usize = 54;
 const RANDOM_SHIFT: usize = 38;
 const RANDOM_SHIFT_MASK: u32 = 0x00_00_FF_FF;
 const SERVER_ID_MASK: u64 = 0b1111111111000000000000000000000000000000000000000000000000000000;
-const MSG_ID_MASK: u64    = 0b0000000000000000000000000011111111111111111111111111111111111111;
+const MSG_ID_MASK: u64 = 0b0000000000000000000000000011111111111111111111111111111111111111;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum IncomingEvt {
-    ElectedLeader,
-    Follower{server: u32},
+    ElectedLeader{ max_commited_id: u64 },
+    Follower { server: u32 },
     NoHandler,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 enum IncomingState {
     /// This server is the leader and needs to append message directly to the buffer.
-    Leader,
+    Leader { writer: MessageWriteAppend },
     /// Send messages to the current leader.
-    Follower{server_id: u32},
+    Follower { server_id: u32 },
     /// Hold onto the messages.
     NoHandler,
+}
+
+impl PartialEq for IncomingState {
+    fn eq(&self, other: &IncomingState) -> bool {
+        match self {
+            IncomingState::Follower { server_id } => {
+                if let IncomingState::Follower { server_id } = other {
+                    server_id == server_id
+                } else {
+                    false
+                }
+            }
+            IncomingState::NoHandler => {
+                if let IncomingState::NoHandler = other {
+                    true
+                } else {
+                    false
+                }
+            }
+            IncomingState::Leader { writer: _ } => {
+                if let IncomingState::Leader { writer: _ } = other {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 pub(crate) struct IncomingMessageProcessor {
@@ -59,19 +89,21 @@ pub(crate) fn create_incoming_message_processor(
     file_storage_directory: &str,
     file_prefix: &str,
     file_size: usize,
-    buffer_size: &usize) -> (IncomingMessageProcessor, IncomingMessageClient) {
+    buffer_size: &usize,
+) -> (IncomingMessageProcessor, IncomingMessageClient) {
     let (read, write) = create_many_to_one(buffer_size);
-    let collection = MessageWriteCollection::open_dir(file_storage_directory, file_prefix, file_size).unwrap();
+    let collection =
+        MessageWriteCollection::open_dir(file_storage_directory, file_prefix, file_size).unwrap();
     let start_id = create_start_id(server_id);
     let processor = IncomingMessageProcessor {
         current_state: IncomingState::NoHandler,
         incoming_queue: read,
         message_writer_collection: collection,
-        server_id
+        server_id,
     };
     let client = IncomingMessageClient {
         incoming_writer: write,
-        internal_message_id: AtomicU64::new(start_id)
+        internal_message_id: AtomicU64::new(start_id),
     };
     (processor, client)
 }
@@ -107,48 +139,39 @@ pub fn get_message_id_from_message(server_msg_id: &u64) -> u64 {
 }
 
 impl IncomingMessageProcessor {
-
     /// Used to process the incoming event.
     /// # Arguments
     /// `event` - The incoming event to handle.
     fn process_event(&mut self, event: IncomingEvt) {
-        match self.current_state {
-            IncomingState::Follower{server_id} => {
-                match event {
-                    IncomingEvt::ElectedLeader => {
-                        self.change_leader();
-                    }
-                    IncomingEvt::Follower{server} => {
-                        self.change_follower(server);
-                    }
-                    IncomingEvt::NoHandler => {
-                        self.change_no_handler();
-                    }
+        match &self.current_state {
+            IncomingState::Follower { server_id } => match event {
+                IncomingEvt::ElectedLeader{max_commited_id} => {
+                    self.change_leader(max_commited_id);
+                }
+                IncomingEvt::Follower { server } => {
+                    self.change_follower(server);
+                }
+                IncomingEvt::NoHandler => {
+                    self.change_no_handler();
                 }
             },
-            IncomingState::NoHandler => {
-                match event {
-                    IncomingEvt::ElectedLeader => {
-                        self.change_leader();
-                    }
-                    IncomingEvt::Follower{server} => {
-                        if server == self.server_id {
-                            self.change_leader();
-                        } else {
-                            self.change_follower(server);
-                        }
-                    }
-                    IncomingEvt::NoHandler => {
-                        self.change_no_handler();
-                    }
+            IncomingState::NoHandler => match event {
+                IncomingEvt::ElectedLeader{max_commited_id} => {
+                    self.change_leader(max_commited_id);
+                }
+                IncomingEvt::Follower { server } => {
+                    self.change_follower(server);
+                }
+                IncomingEvt::NoHandler => {
+                    self.change_no_handler();
                 }
             },
-            IncomingState::Leader => {
+            IncomingState::Leader{writer} => {
                 match event {
-                    IncomingEvt::ElectedLeader => {
+                    IncomingEvt::ElectedLeader{max_commited_id} => {
                         // Do nothing
                     }
-                    IncomingEvt::Follower{server} => {
+                    IncomingEvt::Follower { server } => {
                         self.change_follower(server);
                     }
                     IncomingEvt::NoHandler => {
@@ -156,20 +179,19 @@ impl IncomingMessageProcessor {
                     }
                 }
             }
-            
         }
     }
 
     fn change_follower(&mut self, leader: u32) {
         if self.server_id == leader {
-            self.current_state = IncomingState::Leader;
+            panic!("We shouldn't get a leader from our one cluster!");
         } else {
-            self.current_state = IncomingState::Follower{server_id: leader};
+            self.current_state = IncomingState::Follower { server_id: leader };
         }
     }
 
-    fn change_leader(&mut self) {
-        self.current_state = IncomingState::Leader;
+    fn change_leader(&mut self, max_commit_id: u64) {
+        self.current_state = IncomingState::Leader{writer: self.message_writer_collection.get_current_append(max_commit_id).unwrap()};
     }
 
     fn change_no_handler(&mut self) {
@@ -179,10 +201,12 @@ impl IncomingMessageProcessor {
 
 #[cfg(test)]
 mod test {
-    use std::fs::*;
-    use serial_test::serial;
     use crate::raft::incoming_message::*;
-    use a19_concurrent::buffer::ring_buffer::{ManyToOneBufferWriter, ManyToOneBufferReader, create_many_to_one};
+    use a19_concurrent::buffer::ring_buffer::{
+        create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
+    };
+    use serial_test::serial;
+    use std::fs::*;
 
     const FILE_STORAGE_DIRECTORY: &str = "../../../cargo/tests/a19_data_persisted_incoming/";
     const FILE_PREFIX: &str = "incoming";
@@ -192,7 +216,6 @@ mod test {
         if path.exists() {
             remove_dir_all(FILE_STORAGE_DIRECTORY);
         }
-        
     }
 
     #[test]
@@ -214,7 +237,7 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000,
-            &(32 * 1000 as usize)
+            &(32 * 1000 as usize),
         );
     }
 
@@ -227,15 +250,18 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
-        processor.current_state = IncomingState::Follower{server_id: 2};
-        processor.process_event(IncomingEvt::ElectedLeader);
-        assert_eq!(IncomingState::Leader, processor.current_state);
+        processor.current_state = IncomingState::Follower { server_id: 2 };
+        processor.process_event(IncomingEvt::ElectedLeader{ max_commited_id:1 });
+        let writer = processor.message_writer_collection.get_current_append(1).unwrap();
+        assert_eq!(IncomingState::Leader{ writer }, processor.current_state);
     }
 
     #[test]
     #[serial]
+    #[should_panic]
     pub fn process_event_follower_leader_follower_test() {
         clean();
         let (mut processor, client) = create_incoming_message_processor(
@@ -243,11 +269,13 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
-        processor.current_state = IncomingState::Follower{server_id: 2};
-        processor.process_event(IncomingEvt::Follower{server: 1});
-        assert_eq!(IncomingState::Leader, processor.current_state);
+        processor.current_state = IncomingState::Follower { server_id: 2 };
+        processor.process_event(IncomingEvt::Follower { server: 1 });
+        let writer = processor.message_writer_collection.get_current_append(1).unwrap();
+        assert_eq!(IncomingState::Leader{writer}, processor.current_state);
     }
 
     #[test]
@@ -259,11 +287,13 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
         processor.current_state = IncomingState::NoHandler;
-        processor.process_event(IncomingEvt::ElectedLeader);
-        assert_eq!(IncomingState::Leader, processor.current_state);
+        processor.process_event(IncomingEvt::ElectedLeader{max_commited_id: 1});
+        let writer = processor.message_writer_collection.get_current_append(1).unwrap();
+        assert_eq!(IncomingState::Leader{writer}, processor.current_state);
     }
 
     #[test]
@@ -275,11 +305,16 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
-        processor.current_state = IncomingState::Leader;
-        processor.process_event(IncomingEvt::Follower{server: 2});
-        assert_eq!(IncomingState::Follower{server_id: 2}, processor.current_state);
+        let writer = processor.message_writer_collection.get_current_append(1).unwrap();
+        processor.current_state = IncomingState::Leader{ writer };
+        processor.process_event(IncomingEvt::Follower { server: 2 });
+        assert_eq!(
+            IncomingState::Follower { server_id: 2 },
+            processor.current_state
+        );
     }
 
     #[test]
@@ -291,11 +326,15 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
         processor.current_state = IncomingState::NoHandler;
-        processor.process_event(IncomingEvt::Follower{server: 2});
-        assert_eq!(IncomingState::Follower{server_id: 2}, processor.current_state);
+        processor.process_event(IncomingEvt::Follower { server: 2 });
+        assert_eq!(
+            IncomingState::Follower { server_id: 2 },
+            processor.current_state
+        );
     }
 
     #[test]
@@ -307,9 +346,12 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
-        processor.current_state = IncomingState::Leader;
+        processor.current_state = IncomingState::Leader {
+            writer: processor.message_writer_collection.get_current_append(1).unwrap(),
+        };
         processor.process_event(IncomingEvt::NoHandler);
         assert_eq!(IncomingState::NoHandler, processor.current_state);
     }
@@ -323,11 +365,11 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000 as usize),
-            &(32 * 1000 as usize));
+            &(32 * 1000 as usize),
+        );
 
-        processor.current_state = IncomingState::Follower{server_id: 2};
+        processor.current_state = IncomingState::Follower { server_id: 2 };
         processor.process_event(IncomingEvt::NoHandler);
         assert_eq!(IncomingState::NoHandler, processor.current_state);
     }
 }
-

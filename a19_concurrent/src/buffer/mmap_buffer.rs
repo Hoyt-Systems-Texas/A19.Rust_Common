@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::atomic::{fence, Ordering};
 
 /// The internal implementation of the memory mapped buffer.
+#[derive(Debug)]
 pub struct MemoryMappedInt {
     file: File,
     mmap: MmapMut,

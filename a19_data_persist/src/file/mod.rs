@@ -1,7 +1,7 @@
-use a19_concurrent::buffer::{align, next_pos};
 use a19_concurrent::buffer::atomic_buffer::AtomicByteBuffer;
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::DirectByteBuffer;
+use a19_concurrent::buffer::{align, next_pos};
 use std::cell::UnsafeCell;
 use std::fs::OpenOptions;
 use std::path::Path;
@@ -67,6 +67,7 @@ impl MessageFileStoreRead {
 unsafe impl Sync for MessageFileStoreRead {}
 unsafe impl Send for MessageFileStoreRead {}
 
+#[derive(Debug)]
 pub struct MessageFileStoreWrite {
     store: Arc<UnsafeCell<MessageFileStore>>,
 }
@@ -100,6 +101,7 @@ unsafe impl Sync for MessageFileStoreWrite {}
 
 /// Represents the storage of files.   It supports a singler writer with multiple readers.  This is
 /// the building blocks for raft protocol.
+#[derive(Debug)]
 pub struct MessageFileStore {
     /// The buffer we are writing to.
     buffer: MemoryMappedInt,

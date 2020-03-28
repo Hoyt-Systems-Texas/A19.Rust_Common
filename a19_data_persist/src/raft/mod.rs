@@ -17,10 +17,10 @@
 //! file_prefix.events.3
 //! file_prefix.commit.3
 //!
+pub mod incoming_message;
 pub mod network;
 pub mod state_machine;
 pub mod write_message;
-pub mod incoming_message;
 
 pub const EVENT_FILE_POSTFIX: &str = "events";
 pub const COMMIT_FILE_POSTIX: &str = "commit";
@@ -34,7 +34,7 @@ use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
 };
-use a19_concurrent::buffer::{align, DirectByteBuffer, next_pos};
+use a19_concurrent::buffer::{align, next_pos, DirectByteBuffer};
 use a19_concurrent::queue::mpsc_queue::{MpscQueueReceive, MpscQueueWrap};
 use a19_concurrent::queue::spsc_queue::{SpscQueueReceiveWrap, SpscQueueSendWrap};
 use futures::channel::oneshot;
@@ -1024,12 +1024,11 @@ pub(crate) struct MessageFileInfo {
 }
 
 impl MessageFileInfo {
-    
     /// Opens a file for writing.
     /// # Arguments
     /// `file_size` - The size of the file to open.  Only used if it doesn't exists.
     pub(crate) fn open_write(&self, file_size: &usize) -> std::io::Result<MessageFileStoreWrite> {
-        unsafe {MessageFileStore::open_write(&self.path, *file_size)}
+        unsafe { MessageFileStore::open_write(&self.path, *file_size) }
     }
 }
 
@@ -2132,7 +2131,7 @@ pub(crate) fn create_term_file(
     file_size: usize,
 ) -> TermFile {
     let path = create_commit_name(file_storage_directory, file_prefix, &file_id);
-    let buffer = unsafe {MemoryMappedInt::new(&path, file_size)}.unwrap();
+    let buffer = unsafe { MemoryMappedInt::new(&path, file_size) }.unwrap();
     TermFile::new(buffer, term_start, file_id)
 }
 
