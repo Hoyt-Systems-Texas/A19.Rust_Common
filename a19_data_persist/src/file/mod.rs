@@ -188,7 +188,7 @@ impl MessageFileStore {
             let file = OpenOptions::new().read(true).write(true).open(path)?;
             MemoryMappedInt::open(file)?
         } else {
-            let file = OpenOptions::new()
+            let _file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
@@ -407,11 +407,6 @@ impl<'a> MessageRead<'a> {
     #[inline]
     pub fn next_pos(&self) -> usize {
         self.next_pos
-    }
-
-    #[inline]
-    pub fn is_end(&self) -> bool {
-        self.is_end()
     }
 }
 

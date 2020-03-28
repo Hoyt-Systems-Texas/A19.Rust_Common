@@ -816,7 +816,7 @@ mod test {
     #[test]
     #[serial]
     pub fn commit_term_client() {
-        let (mut state_machine, mut net) = create_state_machine();
+        let (mut state_machine, net) = create_state_machine();
         let term_id = 1;
         let pos = match state_machine.commit_term_file.calculate_pos(&term_id) {
             TermPosResult::Pos(pos) => pos,
@@ -853,7 +853,7 @@ mod test {
     #[test]
     #[serial]
     pub fn commit_term_client_rollover() {
-        let (mut state_machine, mut net) = create_state_machine();
+        let (mut state_machine, net) = create_state_machine();
         let term_id = TERMS_PER_FILE + 1;
         state_machine.current_term_id = 50;
         state_machine.current_commited_term = 50;
@@ -897,7 +897,7 @@ mod test {
     #[test]
     #[serial]
     pub fn commit_term_leader_test() {
-        let (mut state_machine, mut net) = create_state_machine();
+        let (mut state_machine, net) = create_state_machine();
         state_machine.current_term_id = 1;
         state_machine.current_commited_term = 0;
         state_machine.current_state = RaftState::Leader {

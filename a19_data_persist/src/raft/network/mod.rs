@@ -306,7 +306,6 @@
 //! Request a missing term(s) from the server.
 use crate::file::MessageFileStoreRead;
 use crate::raft::state_machine::{RaftEvent, RaftStateMachineClient};
-use a19_concurrent::buffer::align;
 use a19_concurrent::queue::spsc_queue::SpscQueueReceiveWrap;
 use byteorder::{BigEndian, ByteOrder};
 use std::sync::Arc;

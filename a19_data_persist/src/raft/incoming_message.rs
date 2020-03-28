@@ -134,7 +134,7 @@ pub fn get_server_id_from_message(server_msg_id: &u64) -> u32 {
 /// # Returns
 /// The server id to get the message id.
 pub fn get_message_id_from_message(server_msg_id: &u64) -> u64 {
-    (server_msg_id & MSG_ID_MASK)
+    server_msg_id & MSG_ID_MASK
 }
 
 impl IncomingMessageProcessor {
@@ -165,7 +165,7 @@ impl IncomingMessageProcessor {
                     self.change_no_handler();
                 }
             },
-            IncomingState::Leader{writer} => {
+            IncomingState::Leader{writer: _} => {
                 match event {
                     IncomingEvt::ElectedLeader{max_commited_id} => {
                         // Do nothing

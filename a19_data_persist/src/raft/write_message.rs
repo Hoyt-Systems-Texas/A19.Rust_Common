@@ -256,8 +256,8 @@ fn new_message_file(
     let path = create_commit_name(file_storage_directory, file_prefix, &file_id);
     let path_p = Path::new(&path);
     if path_p.exists() {
-        let (read, write) = unsafe { MessageFileStore::new(&path, file_size)? };
-        match read.read(0, |_, id, _| {}) {
+        let (read, _) = unsafe { MessageFileStore::new(&path, file_size)? };
+        match read.read(0, |_, _, _| {}) {
             Ok(_) => Err(crate::file::Error::AlreadyExists)?,
             _ => {
                 remove_file(&path)?;

@@ -1654,8 +1654,8 @@ fn write_thread_single(
             if stop.load(atomic::Ordering::Relaxed) > 0 {
                 break 0;
             } else {
-                let mut write_out_pos = 0;
-                let mut write_out_file = 0;
+                let write_out_pos = 0;
+                let write_out_file = 0;
                 let r = pending_write_queue.read(
                     |msg_type, bytes| {
                         last_msg_id += 1;
@@ -1903,17 +1903,17 @@ fn commit_thread_single(
                                         Ok(buffer) => {
                                             message_file = buffer;
                                         }
-                                        Err(e) => {
+                                        Err(_) => {
                                             // Spin
                                             thread::sleep(Duration::from_millis(10));
                                         }
                                     }
                                 }
                                 file::Error::NotEnoughSpace {
-                                    position,
-                                    capacity,
-                                    remaining,
-                                    message_size,
+                                    position: _,
+                                    capacity: _,
+                                    remaining: _,
+                                    message_size: _,
                                 } => {
                                     panic!("We are reading in a message this should never happen!");
                                 }
@@ -1988,7 +1988,7 @@ where
                                 }
                                 read_pos = result.next_pos();
                             } else {
-                                thread::sleep_ms(1);
+                                thread::sleep(Duration::from_millis(1));
                             }
                         } else {
                             // TODO handle the cluster message.
@@ -1998,7 +1998,7 @@ where
                     Err(e) => {
                         match e {
                             file::Error::NoMessage => {
-                                thread::sleep_ms(1);
+                                thread::sleep(Duration::from_millis(1));
                             }
                             file::Error::Full => {
                                 // TODO go to next file
@@ -2015,7 +2015,7 @@ where
                                         read_pos = 0;
                                     }
                                     Err(e) => {
-                                        thread::sleep_ms(10);
+                                        thread::sleep(Duration::from_millis(10));
                                     }
                                 }
                             }
@@ -2042,12 +2042,12 @@ where
                                         read_pos = 0;
                                     }
                                     Err(e) => {
-                                        thread::sleep_ms(10);
+                                        thread::sleep(Duration::from_millis(10));
                                     }
                                 }
                             }
                             file::Error::FileError(e) => {
-                                thread::sleep_ms(2);
+                                thread::sleep(Duration::from_millis(2));
                             }
                             file::Error::InvalidFile | file::Error::AlreadyExists => {
                                 // do nothing
@@ -2192,11 +2192,7 @@ impl PersistedMessageFile {
 mod tests {
 
     use crate::file::{MessageFileStore, MessageRead};
-    use crate::raft::{
-        create_event_name, find_end_of_buffer, load_current_files, process_files, read_file_id,
-        startup_single_node, FileCollection, FindEmptySlotResult, MessageProcessor,
-        PersistedMessageFile, PersistedMessageReadStream, PersistedMessageWriteStream,
-    };
+    use crate::raft::*;
     use a19_concurrent::buffer::ring_buffer::create_many_to_one;
     use futures::future::Future;
     use std::fs::{create_dir_all, remove_dir_all};
@@ -2224,7 +2220,7 @@ mod tests {
         assert_eq!(files.commit_files.lock().unwrap().len(), 1);
         assert_eq!(files.message_files.lock().unwrap().len(), 1);
 
-        let mut other_files = load_current_files(TEST_PREFIX, TEST_DIR).unwrap();
+        let other_files = load_current_files(TEST_PREFIX, TEST_DIR).unwrap();
     }
 
     #[test]
@@ -2292,7 +2288,7 @@ mod tests {
         if path.exists() && path.is_dir() {
             remove_dir_all(&file_storage_directory).unwrap();
         }
-        let mut processor = MessageProcessorInt::new();
+        let processor = MessageProcessorInt::new();
         let mut single_node = startup_single_node(
             file_storage_directory,
             TEST_PREFIX.to_owned(),
