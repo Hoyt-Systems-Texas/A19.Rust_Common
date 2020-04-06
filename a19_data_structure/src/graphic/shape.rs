@@ -13,7 +13,7 @@ impl Line {
     /// # Arguments
     /// `start` - The starting point of the line.
     /// `end` - The ending point of the line.
-    fn new(start: Point, end: Point) -> Line {
+    pub fn new(start: Point, end: Point) -> Line {
         Line { start, end }
     }
 
@@ -144,20 +144,20 @@ impl Polygon {
 }
 
 impl Graphic for Polygon {
-    fn normalize(&mut self, value: &f64) {
+    fn normalize(&mut self, value: f64) {
         for point in self.points.iter_mut() {
             point.normalize(value);
         }
     }
 
-    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
+    fn translate_up(&mut self, x_amount: f64, y_amount: f64) {
         for point in self.points.iter_mut() {
             point.translate_up(x_amount, y_amount);
         }
         self.change();
     }
 
-    fn scale(&mut self, factor: &f64) {
+    fn scale(&mut self, factor: f64) {
         for point in self.points.iter_mut() {
             point.scale(factor);
         }
@@ -194,7 +194,7 @@ impl Shape for Polygon {
                             }
                         }
                         _ => {
-                            count = count + 1;
+                            count += 1;
                         }
                     }
                 }
@@ -215,7 +215,7 @@ pub struct Circle {
 }
 
 impl Circle {
-    fn new(center: Point, radius: f64) -> Circle {
+    pub fn new(center: Point, radius: f64) -> Circle {
         let mut c = Circle {
             center,
             radius,
@@ -260,8 +260,8 @@ impl Graphic for Circle {
     /// Used to normalize the values between 0 and 1.
     /// # Arguments
     /// `value` - The value to normalize by.
-    fn normalize(&mut self, value: &f64) {
-        self.radius = self.radius / value;
+    fn normalize(&mut self, value: f64) {
+        self.radius /= value;
         self.center.normalize(value);
         self.update();
     }
@@ -270,7 +270,7 @@ impl Graphic for Circle {
     /// # Arguments
     /// `x_amount` - The amount to translate by in the x direction.
     /// `y_amount` - The amount to translate by in the y direction.
-    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
+    fn translate_up(&mut self, x_amount: f64, y_amount: f64) {
         self.center.translate_up(x_amount, y_amount);
         self.update();
     }
@@ -278,8 +278,8 @@ impl Graphic for Circle {
     /// Scales the point by the factor.
     /// # Arguments
     /// `factor` - The factor to scale by.
-    fn scale(&mut self, factor: &f64) {
-        self.radius = self.radius * factor;
+    fn scale(&mut self, factor: f64) {
+        self.radius *= factor;
         self.update();
     }
 }
@@ -292,7 +292,7 @@ pub struct Rectangle {
 }
 
 impl Rectangle {
-    fn new(top_left: Point, width: f64, height: f64) -> Rectangle {
+    pub fn new(top_left: Point, width: f64, height: f64) -> Rectangle {
         let bottom_right = Point {
             x: top_left.x + width,
             y: top_left.y + height,
@@ -319,7 +319,7 @@ impl Rectangle {
 }
 
 impl Rectangle {
-    fn top_left(&self) -> &Point {
+    pub fn top_left(&self) -> &Point {
         &self.top_left
     }
 }
@@ -352,10 +352,10 @@ impl Graphic for Rectangle {
     /// Used to normalize the values between 0 and 1.
     /// # Arguments
     /// `value` - The value to normalize by.
-    fn normalize(&mut self, value: &f64) {
+    fn normalize(&mut self, value: f64) {
         self.top_left.normalize(value);
-        self.width = self.width / value;
-        self.height = self.height / value;
+        self.width /= value;
+        self.height /= value;
         self.update();
     }
 
@@ -363,7 +363,7 @@ impl Graphic for Rectangle {
     /// # Arguments
     /// `x_amount` - The amount to translate by in the x direction.
     /// `y_amount` - The amount to translate by in the y direction.
-    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
+    fn translate_up(&mut self, x_amount: f64, y_amount: f64) {
         self.top_left.translate_up(x_amount, y_amount);
         self.update();
     }
@@ -371,10 +371,10 @@ impl Graphic for Rectangle {
     /// Scales the point by the factor.
     /// # Arguments
     /// `factor` - The factor to scale by.
-    fn scale(&mut self, factor: &f64) {
+    fn scale(&mut self, factor: f64) {
         self.top_left.scale(factor);
-        self.height = self.height * factor;
-        self.width = self.width * factor;
+        self.height *= factor;
+        self.width *= factor;
         self.update();
     }
 }

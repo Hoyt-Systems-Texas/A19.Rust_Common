@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-use std::cmp::{max, min};
-use std::rc::Rc;
+use std::cmp::min;
 use std::vec::Vec;
 
 /// Uses row major layout.
@@ -73,13 +71,11 @@ impl<TNode> Matrix2d<TNode> {
     ) {
         let row_end_c = min(self.rows, row_end + 1);
         let col_end_c = min(self.cols, col_end + 1);
-        let col_count = col_end_c - col_start + 1;
 
         for row in row_start..row_end_c {
             for col in col_start..col_end_c {
-                match self.get_node(row, col) {
-                    Some(node) => act(row, col, node),
-                    None => {}
+                if let Some(node) = self.get_node(row, col) {
+                    act(row, col, node);
                 }
             }
         }
