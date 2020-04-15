@@ -19,18 +19,18 @@ pub trait Graphic {
     /// Used to normalize the values between 0 and 1.
     /// # Arguments
     /// `value` - The value to normalize by.
-    fn normalize(&mut self, value: &f64);
+    fn normalize(&mut self, value: f64);
 
     /// Translate the shape by the specified amount and updates it.
     /// # Arguments
     /// `x_amount` - The amount to translate by in the x direction.
     /// `y_amount` - The amount to translate by in the y direction.
-    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64);
+    fn translate_up(&mut self, x_amount: f64, y_amount: f64);
 
     /// Scales the point by the factor.
     /// # Arguments
     /// `factor` - The factor to scale by.
-    fn scale(&mut self, factor: &f64);
+    fn scale(&mut self, factor: f64);
 }
 
 impl Point {
@@ -51,25 +51,25 @@ impl Point {
     /// @ Arguments
     /// `start` - The starting point to calculate.
     /// `end` - The ending point.
-    pub fn centroid(start: &f64, end: &f64) -> f64 {
+    pub fn centroid(start: f64, end: f64) -> f64 {
         start + (end - start)
     }
 }
 
 impl Graphic for Point {
-    fn normalize(&mut self, value: &f64) {
-        self.x = self.x / value;
-        self.y = self.x / value;
+    fn normalize(&mut self, value: f64) {
+        self.x /= value;
+        self.y /= value;
     }
 
-    fn translate_up(&mut self, x_amount: &f64, y_amount: &f64) {
-        self.x = self.x + x_amount;
-        self.y = self.y + y_amount;
+    fn translate_up(&mut self, x_amount: f64, y_amount: f64) {
+        self.x += x_amount;
+        self.y += y_amount;
     }
 
-    fn scale(&mut self, factor: &f64) {
-        self.x = self.x * factor;
-        self.y = self.y * factor;
+    fn scale(&mut self, factor: f64) {
+        self.x *= factor;
+        self.y *= factor;
     }
 }
 
@@ -116,8 +116,8 @@ impl BoundingBox {
     /// Used to find the center of a bounding box.
     pub fn center(&self) -> Point {
         Point::new(
-            Point::centroid(&self.bottom_right.x, &self.top_left.x),
-            Point::centroid(&self.bottom_right.y, &self.top_left.y),
+            Point::centroid(self.bottom_right.x, self.top_left.x),
+            Point::centroid(self.bottom_right.y, self.top_left.y),
         )
     }
 
