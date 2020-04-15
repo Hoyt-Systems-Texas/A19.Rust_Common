@@ -201,9 +201,6 @@ impl IncomingMessageProcessor {
 #[cfg(test)]
 mod test {
     use crate::raft::incoming_message::*;
-    use a19_concurrent::buffer::ring_buffer::{
-        create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
-    };
     use serial_test::serial;
     use std::fs::*;
     use std::path::*;
@@ -286,7 +283,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            32 * 1000 as usize,
             &(32 * 1000 as usize),
         );
 
@@ -304,7 +301,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            32 * 1000 as usize,
             &(32 * 1000 as usize),
         );
 
@@ -325,7 +322,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            32 * 1000 as usize,
             &(32 * 1000 as usize),
         );
 
@@ -345,7 +342,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            32 * 1000 as usize,
             &(32 * 1000 as usize),
         );
 
@@ -364,7 +361,7 @@ mod test {
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000 as usize),
+            32 * 1000 as usize,
             &(32 * 1000 as usize),
         );
 

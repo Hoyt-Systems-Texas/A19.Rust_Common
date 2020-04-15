@@ -55,31 +55,35 @@ pub(crate) enum RaftEvent {
         server_id: u32,
         max_term_id: u64,
     },
-    /// The server has been elected the leader.
+    /// The server has been elected the leader. {Leader} -> {Follower}
     ElectedLeader {
         server_id: u32,
     },
     /// A message from a client has been received.  There needs to be a future attached so we can signal the message has been committed.
     ClientMessageReceived,
-    /// The id of the term that has been committed.
+    /// The id of the term that has been committed. {Follower}
     Commited {
         server_id: u32,
         term_id: u64,
     },
     /// Stop the state machine from running.
     Stop,
+    /// {Follower} -> {Leader}
     FollowerIndex {
         term_id: u64,
         server_id: u32,
     },
+    /// Received a heartbeat from a follower. {Followers} -> {Leader}
     Pong {
         server_id: u32,
         max_term_id: u64,
     },
+    /// Sent to followers. {Leader} -> {Follower, Candidate}
     Ping {
         server_id: u32,
         max_commited_term: u64,
     },
+    /// The leader hasn't received a message. `Leader`
     NoMessagesTimeout,
     /// The internal message to process after it has been committed.  This is internal messages received over the queue.
     ProcessInternalMessage {
@@ -192,11 +196,11 @@ fn create_state_machine(
         LastCommitPos::NoCommits => {
             let file_id = 1;
             let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
-            let file = OpenOptions::new()
+            let _ = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create_new(true)
-                .open(&file_name);
+                .open(&file_name).unwrap();
             let map = unsafe {
                 MemoryMappedInt::new(&file_name, next_pos(commit_file_size, COMMIT_SIZE as usize))
                     .unwrap()
@@ -280,6 +284,7 @@ fn create_state_machine(
 }
 
 /// Kicks off the thread to process the state machine events.
+#[allow(dead_code)]
 fn run_state_machine(state_machine: RaftStateMachine) -> JoinHandle<u32> {
     thread::spawn(move || {
         let mut state_machine = state_machine;
@@ -290,10 +295,10 @@ fn run_state_machine(state_machine: RaftStateMachine) -> JoinHandle<u32> {
                 // TODO pause for a little bit.
             }
         }
-        1
     })
 }
 
+#[allow(dead_code)]
 impl RaftStateMachine {
     fn send_leader_request(&mut self) {
         self.state_message_queue_writer
@@ -499,7 +504,7 @@ impl RaftStateMachine {
 
     fn process_event(&mut self, event: RaftEvent) {
         match &self.current_state {
-            RaftState::Candidate { votes } => {
+            RaftState::Candidate { .. } => {
                 match event {
                     RaftEvent::VoteForCandiate { server_id } => {
                         self.handle_candidate(server_id);
@@ -525,8 +530,9 @@ impl RaftStateMachine {
                     RaftEvent::VoteTimeout => {
                         self.handle_vote_timeout();
                     }
-                    RaftEvent::ProcessInternalMessage { msg } => {
+                    RaftEvent::ProcessInternalMessage { msg: _ } => {
                         // This should never happen since we can't commit while a candidate!
+                        panic!("Processing an internal message when candidate!")
                     }
                     _ => {
                         // Ignore the rest of the events.
@@ -538,7 +544,7 @@ impl RaftStateMachine {
                     RaftEvent::ClientMessageReceived => {
                         // Forward to the server.
                     }
-                    RaftEvent::FollowerIndex { server_id, term_id } => {
+                    RaftEvent::FollowerIndex { .. } => {
                         // Ignore
                     }
                     RaftEvent::Commited { term_id, server_id } => {
@@ -558,7 +564,7 @@ impl RaftStateMachine {
                         self.send_leader_request();
                     }
                     RaftEvent::Stop => {}
-                    RaftEvent::VoteForCandiate { server_id } => {
+                    RaftEvent::VoteForCandiate { server_id: _ } => {
                         // We should get this see we are following someone :(
                     }
                     RaftEvent::VoteForMe {
@@ -571,14 +577,14 @@ impl RaftStateMachine {
                         }
                     }
                     RaftEvent::Pong {
-                        server_id,
-                        max_term_id,
+                        server_id: _,
+                        max_term_id: _,
                     } => {
                         // We aren't processing these since we aren't the leader.
                     }
                     RaftEvent::Ping {
-                        max_commited_term,
-                        server_id,
+                        max_commited_term: _,
+                        server_id: _,
                     } => {}
                     RaftEvent::NoMessagesTimeout => {
                         // Do nothing since this should be a leader timeout.
@@ -593,8 +599,7 @@ impl RaftStateMachine {
                 }
             }
             RaftState::Leader {
-                next_index,
-                match_index,
+                ..
             } => {
                 match event {
                     RaftEvent::ClientMessageReceived => {
@@ -603,7 +608,7 @@ impl RaftStateMachine {
                     RaftEvent::FollowerIndex { server_id, term_id } => {
                         self.handle_follower_index(server_id, term_id);
                     }
-                    RaftEvent::Commited { term_id, server_id } => {
+                    RaftEvent::Commited { term_id: _, server_id: _ } => {
                         // Would be an error since we are sending these :(
                     }
                     RaftEvent::ElectedLeader { server_id } => {
@@ -621,7 +626,7 @@ impl RaftStateMachine {
                     } => {
                         self.handle_vote_for_me(server_id, max_term_id);
                     }
-                    RaftEvent::VoteForCandiate { server_id } => {
+                    RaftEvent::VoteForCandiate { server_id: _ } => {
                         // Ignore invalid event.
                     }
                     RaftEvent::Pong {
@@ -631,8 +636,8 @@ impl RaftStateMachine {
                         self.handle_leader_pong(server_id, max_term_id);
                     }
                     RaftEvent::Ping {
-                        max_commited_term,
-                        server_id,
+                        max_commited_term: _,
+                        server_id: _,
                     } => {
                         // Ignore we are the leader and shouldn't be getting a pong.
                     }
@@ -658,7 +663,6 @@ mod test {
 
     use crate::raft::network::*;
     use crate::raft::state_machine::*;
-    use crate::raft::*;
     use a19_concurrent::buffer::DirectByteBuffer;
     use a19_concurrent::queue::skip_queue::create_skip_queue;
     use serial_test::serial;
