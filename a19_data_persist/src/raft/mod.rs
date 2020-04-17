@@ -594,6 +594,7 @@ where
     /// `message_processor` - What to call to handle processing the messages.
     /// `file_storage_directory` - The directory the files are stored in.
     /// `file_prefix` - The file prefix for the file storage.
+    #[allow(dead_code)]
     fn new(
         starting_file_id: u32,
         from_message_id: u64,
@@ -1408,6 +1409,7 @@ pub fn create_commit_name(
 /// `file_storage_directory` - The location to store the file.
 /// `max_file_size` - The maximum file size.  The value is assumed to be already aligned.
 /// `commit_file_size` - The commit file size.
+#[allow(dead_code)]
 fn process_files(
     file_collection: &mut FileCollection,
     file_prefix: &str,
@@ -1424,9 +1426,9 @@ fn process_files(
     if commit_files.len() == 0 && message_files.len() == 0 {
         let file_id: u32 = 1;
         let path_commit = create_event_name(file_storage_directory, file_prefix, &file_id);
-        let (read, write) = unsafe { MessageFileStore::new(&path_commit, *max_file_size)? };
+        let (_read, _write) = unsafe { MessageFileStore::new(&path_commit, *max_file_size)? };
         let path_event = create_commit_name(file_storage_directory, file_prefix, &file_id);
-        let commit_file = unsafe { MemoryMappedInt::new(&path_event, *commit_file_size)? };
+        let _commit_file = unsafe { MemoryMappedInt::new(&path_event, *commit_file_size)? };
         message_files.push(MessageFileInfo::new(path_commit.clone(), 1, 0));
         commit_files.push(CommitFileInfo::new(path_event.clone(), 1, 0, 0));
         Ok(())
@@ -1439,6 +1441,7 @@ fn process_files(
 /// # Arguments
 /// `file_prefix` - The file prefix to load.
 /// `file_storage_directory` - The file storage directory.
+#[allow(dead_code)]
 fn load_current_files(
     file_prefix: &str,
     file_storage_directory: &str,
@@ -1662,8 +1665,8 @@ fn write_thread_single(
                         let (pos, file) = file_buffer
                             .add_message(&msg_type, &last_msg_id, bytes)
                             .unwrap();
-                        let write_out_pos = pos;
-                        let write_out_file = file;
+                        let _write_out_pos = pos;
+                        let _write_out_file = file;
                     },
                     100,
                 );
@@ -1723,7 +1726,7 @@ fn commit_thread_single(
             LastCommitPos::NoCommits => {
                 let file_id = 1;
                 let file_name = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
-                let file = OpenOptions::new()
+                let _file = OpenOptions::new()
                     .read(true)
                     .write(true)
                     .create_new(true)
@@ -1879,19 +1882,21 @@ fn commit_thread_single(
                                             message_file = buffer;
                                         }
                                         Err(e) => {
+                                            log::error!("{}", e);
                                             // Spin
                                             thread::sleep(Duration::from_millis(10));
                                         }
                                     }
                                 }
                                 file::Error::FileError(e) => {
+                                    log::error!("{}", e);
                                     // Spin
                                     thread::sleep(Duration::from_millis(100));
                                 }
                                 file::Error::NoMessage => {
                                     thread::sleep(Duration::from_millis(2));
                                 }
-                                file::Error::PositionOutOfRange(pos) => {
+                                file::Error::PositionOutOfRange(_) => {
                                     // Next file
                                     let next_file = read_file_id + 1;
                                     let file_path = create_event_name(
@@ -2015,19 +2020,17 @@ where
                                         read_pos = 0;
                                     }
                                     Err(e) => {
+                                        log::error!("{}", e);
                                         thread::sleep(Duration::from_millis(10));
                                     }
                                 }
                             }
                             file::Error::NotEnoughSpace {
-                                position,
-                                capacity,
-                                remaining,
-                                message_size,
+                                ..
                             } => {
                                 panic!("We are reading in a message this should never happen!");
                             }
-                            file::Error::PositionOutOfRange(p) => {
+                            file::Error::PositionOutOfRange(_) => {
                                 // TODO go to next file
                                 let next_file_id = read_file_id + 1;
                                 let next_path = create_event_name(
@@ -2042,11 +2045,13 @@ where
                                         read_pos = 0;
                                     }
                                     Err(e) => {
+                                        log::error!("{}", e);
                                         thread::sleep(Duration::from_millis(10));
                                     }
                                 }
                             }
                             file::Error::FileError(e) => {
+                                log::error!("{}", e);
                                 thread::sleep(Duration::from_millis(2));
                             }
                             file::Error::InvalidFile | file::Error::AlreadyExists => {
@@ -2193,7 +2198,6 @@ mod tests {
 
     use crate::file::{MessageFileStore, MessageRead};
     use crate::raft::*;
-    use a19_concurrent::buffer::ring_buffer::create_many_to_one;
     use futures::future::Future;
     use std::fs::{create_dir_all, remove_dir_all};
     use std::path::Path;

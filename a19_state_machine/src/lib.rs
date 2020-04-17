@@ -3,20 +3,17 @@ use a19_concurrent::queue::skip_queue::{create_skip_queue, SkipQueueReader};
 use a19_concurrent::timeout::consistent::TimeoutFixed;
 use a19_core::current_time_secs;
 use async_trait::async_trait;
-use core::pin::Pin;
 use futures::channel::oneshot::{self, channel};
 use futures::future::Future;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::runtime::Handle;
-use tokio::task;
 
 const STATE_INACTIVE: u32 = 0;
 const STATE_RUNNING: u32 = 1;
@@ -489,7 +486,7 @@ async fn run<
                                 match result {
                                     EventActionResult::DidAction { result } => {
                                         if let Some(f) = future {
-                                            f.send(StateMachineResult::Ran(result));
+                                            f.send(StateMachineResult::Ran(result)).unwrap_or_default();
                                         }
                                     }
                                     EventActionResult::Defer => {
@@ -503,7 +500,7 @@ async fn run<
                                             if let Some(f) = future {
                                                 f.send(StateMachineResult::ChangedState(
                                                     state.clone(),
-                                                ));
+                                                )).unwrap_or_default();
                                             }
                                         } else {
                                             // TODO Unable to find the state.
@@ -511,7 +508,7 @@ async fn run<
                                     }
                                     EventActionResult::Ignore => {
                                         if let Some(f) = future {
-                                            f.send(StateMachineResult::Ignored);
+                                            f.send(StateMachineResult::Ignored).unwrap_or_default();
                                         }
                                     }
                                 }
