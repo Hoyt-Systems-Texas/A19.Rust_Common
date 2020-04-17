@@ -15,8 +15,9 @@ pub fn complement(value: usize) -> usize {
 /// # Arguments
 /// `value` - The value to align.
 /// `alignment` - The amount of the alignment.  Must be a power of 2.
+#[inline]
 pub fn align(value: usize, alignment: usize) -> usize {
-    (value + (alignment - 1)) & complement(alignment)
+    (value + (alignment - 1)) & !(alignment - 1)
 }
 
 /// Used to find the next value.  This useful for appending on buffers.
@@ -163,8 +164,9 @@ mod test {
     #[test]
     pub fn next_pos_test() {
         let result = 128;
-        assert_eq!(result, next_pos(97, 32));
-        assert_eq!(result, next_pos(127, 32));
-        assert_eq!(result, next_pos(128, 32));
+        assert_eq!(result, align(97, 32));
+        assert_eq!(result, align(127, 32));
+        assert_eq!(result, align(128, 32));
+        assert_eq!(160, align(159, 32));
     }
 }

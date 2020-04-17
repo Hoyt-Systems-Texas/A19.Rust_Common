@@ -260,6 +260,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::vec::Vec;
+    use time_test::time_test;
 
     #[test]
     pub fn create_queue_test() {
