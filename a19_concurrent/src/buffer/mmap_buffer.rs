@@ -215,6 +215,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// Used to get a u64 volatile value.
     /// # Arguments
     /// `position` - The position to read the volatile u64 from.
+    #[inline]
     fn get_u64_volatile(&self, position: &usize) -> u64 {
         let v = BigEndian::read_u64(&self.mmap[*position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -225,6 +226,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// # Arguments
     /// `position` - The position to write the unsigned value to.
     /// `value` - The value to write.
+    #[inline]
     fn put_u64_volatile(&mut self, position: &usize, value: &u64) {
         fence(Ordering::Release);
         BigEndian::write_u64(
@@ -237,6 +239,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// # Arguments
     /// `position` - The position to write the signed value to.
     /// `value` - The value to write.
+    #[inline]
     fn get_i64_volatile(&self, position: &usize) -> i64 {
         let v = BigEndian::read_i64(&self.mmap[*position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -247,6 +250,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// # Arguments
     /// `position` - The position to write the signed value to.
     /// `value` - The value to write.
+    #[inline]
     fn put_i64_volatile(&mut self, position: &usize, value: &i64) {
         fence(Ordering::Release);
         BigEndian::write_i64(
@@ -258,6 +262,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// Gets an unsigned u32.
     /// # Arguments
     /// `positon` - The position to get the signed integer.
+    #[inline]
     fn get_u32_volatile(&self, position: &usize) -> u32 {
         let v = BigEndian::read_u32(&self.mmap[*position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -268,6 +273,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     ///  # Arguments
     ///  `position` - The position to put the unsiged integer.
     ///  `value` - The value to write at that location.
+    #[inline]
     fn put_u32_volatile(&mut self, position: &usize, value: &u32) {
         fence(Ordering::Release);
         BigEndian::write_u32(
@@ -279,6 +285,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// Gets an unsigned u32.
     /// # Arguments
     /// `positon` - The position to get the signed integer.
+    #[inline]
     fn get_i32_volatile(&self, position: &usize) -> i32 {
         let v = BigEndian::read_i32(&self.mmap[*position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -289,6 +296,7 @@ impl AtomicByteBuffer for MemoryMappedInt {
     ///  # Arguments
     ///  `position` - The position to put the unsiged integer.
     ///  `value` - The value to write at that location.
+    #[inline]
     fn put_i32_volatile(&mut self, position: &usize, value: &i32) {
         fence(Ordering::Release);
         BigEndian::write_i32(
