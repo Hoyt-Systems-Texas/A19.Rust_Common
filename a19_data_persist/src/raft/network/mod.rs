@@ -312,10 +312,13 @@ use std::sync::Arc;
 use zmq::Socket;
 
 /// The size of the header.
+#[allow(dead_code)]
 const HEADER_SIZE: usize = 32;
 /// 1 MB is the max message size minus the header size.
+#[allow(dead_code)]
 const MAX_MESSAGE_SIZE: usize = 0x100000 - HEADER_SIZE;
 /// The maximum size of a data frame.
+#[allow(dead_code)]
 const MAX_DATA_FRAME_SIZE: usize = MAX_MESSAGE_SIZE + HEADER_SIZE;
 
 // Types for the messages.

@@ -189,6 +189,7 @@ enum OpenFileResult {
 }
 
 impl MessageWriteAppend {
+
     /// Used to open file at the end of the position.
     /// # Arguments
     /// `path` - The path of the file to open.
@@ -196,6 +197,7 @@ impl MessageWriteAppend {
     /// `writer` - The writer associated with the file.
     /// # Returns
     /// Either the message append or full.  If its full need to go to the next file.
+    #[allow(dead_code)]
     fn open(
         msg_file: Rc<MessageFileInfo>,
         last_commited_id: u64,

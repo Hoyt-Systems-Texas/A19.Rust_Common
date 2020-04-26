@@ -1,5 +1,6 @@
 pub mod file;
 pub mod raft;
+pub mod message_stream;
 
 use futures::channel::oneshot::{self};
 

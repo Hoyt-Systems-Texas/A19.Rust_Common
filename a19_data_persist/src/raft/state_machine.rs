@@ -97,22 +97,9 @@ struct ConnectedServer {
     server_id: u32,
 }
 
-struct CommitFileInfo {
-    file_storage_directory: String,
-    file_prefix: String,
-    commit_file_size: usize,
-    file_collection: Arc<FileCollection>,
-    max_message: Arc<AtomicU64>,
-}
 
-struct WriteFileInfo {
-    file_storage_directory: String,
-    file_prefix: String,
-    file_id_start: u32,
-    event_file_size: usize,
-    pending_write_queue: ManyToOneBufferReader,
-}
-
+/// Ideal we can have 2 message buffers.  One for messages that need to be forward and the other commit log.  The issue is, is getting this
+/// to work with the network library.  Will need to figure out how to get this to work.
 pub(crate) struct RaftStateMachine {
     server_id: u32,
     current_state: RaftState,
@@ -124,7 +111,6 @@ pub(crate) struct RaftStateMachine {
     leader_votes: HashSet<u32>,
     message_queue: SkipQueueReader<RaftEvent>,
     commit_term_file: TermFile,
-    new_term_file: TermFile,
     commit_file_size: usize,
     //pending_write_queue: ManyToOneBufferWriter,
     server_count: u32,
@@ -192,6 +178,7 @@ fn create_state_machine(
     file_collection: Arc<FileCollection>,
 ) {
     let max_message = AtomicU64::new(0);
+    // Find the last commit position in the file.
     let (commit_term, max_commit_term) = match find_last_commit_pos(&file_collection.commit_files) {
         LastCommitPos::NoCommits => {
             let file_id = 1;
@@ -228,59 +215,33 @@ fn create_state_machine(
             (term, term_id)
         }
     };
-    let (new_term, last_term) = match find_last_term(&file_collection.commit_files) {
-        LastTermPos::Pos {
-            file_id,
-            last_term,
-            term_start,
-        } => {
-            let path = create_commit_name(&file_storage_directory, &file_prefix, &file_id);
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(false)
-                .open(&path)
-                .unwrap();
-            let map = unsafe { MemoryMappedInt::open(file).unwrap() };
-            (TermFile::new(map, term_start, file_id), last_term)
-        }
-        LastTermPos::NoTerms => {
-            let path = create_commit_name(&file_storage_directory, &file_prefix, &1);
-            let map = unsafe { MemoryMappedInt::new(&path, commit_file_size).unwrap() };
-            (TermFile::new(map, 1, 1), 0)
-        }
-    };
-    if last_term != max_commit_term || new_term.file_id != commit_term.file_id {
-        panic!("Terms must match.  This node must have run in cluster node.")
+    let current_term = max_commit_term;
+    let (message_file, read_pos, read_file_id) = if current_term == 0 {
+        // New file so we don't need to do much.
+        let path = create_event_name(&file_storage_directory, &file_prefix, &1);
+        (
+            unsafe { MessageFileStore::open_readonly(&path).unwrap() },
+            0,
+            1,
+        )
     } else {
-        let current_term = max_commit_term;
-        let (message_file, read_pos, read_file_id) = if current_term == 0 {
-            // New file so we don't need to do much.
-            let path = create_event_name(&file_storage_directory, &file_prefix, &1);
-            (
-                unsafe { MessageFileStore::open_readonly(&path).unwrap() },
-                0,
-                1,
-            )
-        } else {
-            let term_pos = match commit_term.calculate_pos(&max_commit_term) {
-                TermPosResult::Pos(pos) => pos,
-                _ => {
-                    panic!("Bug in finding the position to read in.");
-                }
-            };
-            let msg_file_id = commit_term.buffer.file_id(&term_pos);
-            let position = commit_term.buffer.file_position_offset(&term_pos) as usize
-                + commit_term.buffer.length_of_commit(&term_pos) as usize;
-            let path = create_event_name(&file_storage_directory, &file_prefix, &msg_file_id);
-            (
-                unsafe { MessageFileStore::open_readonly(&path).unwrap() },
-                position,
-                msg_file_id,
-            )
+        let term_pos = match commit_term.calculate_pos(&max_commit_term) {
+            TermPosResult::Pos(pos) => pos,
+            _ => {
+                panic!("Bug in finding the position to read in.");
+            }
         };
-        // now need to store the information
-    }
+        let msg_file_id = commit_term.buffer.file_id(&term_pos);
+        let position = commit_term.buffer.file_position_offset(&term_pos) as usize
+            + commit_term.buffer.length_of_commit(&term_pos) as usize;
+        let path = create_event_name(&file_storage_directory, &file_prefix, &msg_file_id);
+        (
+            unsafe { MessageFileStore::open_readonly(&path).unwrap() },
+            position,
+            msg_file_id,
+        )
+    };
+    // now need to store the information
 }
 
 /// Kicks off the thread to process the state machine events.
@@ -327,7 +288,7 @@ impl RaftStateMachine {
     /// `server_id` - The id of the server to vote for.
     /// `max_term_id` - The max term of the id.
     fn handle_vote_for_me(&mut self, server_id: u32, max_term_id: u64) {
-        if self.voted_for.is_none() {
+        if self.voted_for.is_none() && self.current_term_id <= max_term_id {
             self.state_message_queue_writer
                 .offer(NetworkSendType::Single {
                     msg: NetworkSend::RaftEvent(RaftEvent::VoteForCandiate {
@@ -440,7 +401,7 @@ impl RaftStateMachine {
     fn handle_follower_index(&mut self, server_id: u32, term_id: u64) {
         if let RaftState::Leader {
             next_index,
-            match_index,
+            ..
         } = &mut self.current_state
         {
             next_index.insert(server_id, term_id + 1);
@@ -449,8 +410,8 @@ impl RaftStateMachine {
 
     fn handle_leader_pong(&mut self, server_id: u32, max_term_id: u64) {
         let (start, end) = if let RaftState::Leader {
-            next_index,
             match_index,
+            ..
         } = &mut self.current_state
         {
             let current_max = if let Some(current_max) = match_index.get(&server_id) {
@@ -498,6 +459,9 @@ impl RaftStateMachine {
                     }),
                 });
         }
+    }
+
+    fn create_next_term(&self) {
     }
 
     fn process_message_queue(&self) {}
@@ -603,7 +567,7 @@ impl RaftStateMachine {
             } => {
                 match event {
                     RaftEvent::ClientMessageReceived => {
-                        // Go a new possible term.
+                        // Got a new possible term.
                     }
                     RaftEvent::FollowerIndex { server_id, term_id } => {
                         self.handle_follower_index(server_id, term_id);
@@ -692,13 +656,6 @@ mod test {
             leader_votes: HashSet::new(),
             message_queue: event_reader,
             commit_term_file: create_term_file(
-                FILE_STORAGE_DIRECTORY,
-                FILE_PREFIX,
-                1,
-                1,
-                COMMIT_FILE_SIZE as usize,
-            ),
-            new_term_file: create_term_file(
                 FILE_STORAGE_DIRECTORY,
                 FILE_PREFIX,
                 1,
