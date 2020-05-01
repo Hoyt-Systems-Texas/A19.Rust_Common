@@ -132,227 +132,227 @@ const LENGTH_OF_COMMIT: usize = 60;
 const VOTES: usize = 64;
 
 trait CommitFile {
-    fn set_term(&mut self, pos: &usize, val: &u64) -> &mut Self;
-    fn term(&self, pos: &usize) -> u64;
-    fn set_version(&mut self, pos: &usize, val: &u16) -> &mut Self;
-    fn version(&self, pos: &usize) -> u16;
-    fn set_msg_type(&mut self, pos: &usize, val: &u16) -> &mut Self;
-    fn msg_type(&self, pos: &usize) -> u16;
-    fn set_server(&mut self, pos: &usize, server_id: &u32) -> &mut Self;
-    fn server(&self, pos: &usize) -> u32;
-    fn set_leader(&mut self, pos: &usize, val: &u32) -> &mut Self;
-    fn leader(&self, pos: &usize) -> u32;
-    fn set_committed(&mut self, pos: &usize) -> &mut Self;
-    fn committed(&self, pos: &usize) -> u16;
-    fn set_start_time(&mut self, pos: &usize, time: &u64) -> &mut Self;
-    fn start_time(&self, pos: &usize) -> u64;
-    fn set_committed_timestamp(&mut self, pos: &usize, val: &u64) -> &mut Self;
-    fn committed_timestamp(&mut self, pos: &usize) -> u64;
-    fn set_file_id(&mut self, pos: &usize, val: &u32) -> &mut Self;
-    fn file_id(&self, pos: &usize) -> u32;
-    fn set_file_position_offset(&mut self, pos: &usize, val: &u64) -> &mut Self;
-    fn file_position_offset(&self, pos: &usize) -> u64;
-    fn set_max_message_id(&mut self, pos: &usize, val: &u64) -> &mut Self;
-    fn max_message_id(&self, pos: &usize) -> u64;
-    fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self;
-    fn length_of_commit(&self, pos: &usize) -> u32;
-    fn save_term(&mut self, pos: &usize, term: &TermCommit) -> &mut Self;
-    fn set_votes(&mut self, pos: &usize, votes: u16) -> &mut Self;
-    fn inc_votes(&mut self, pos: &usize) -> u16;
-    fn get_votes(&mut self, pos: &usize) -> u16;
+    fn set_term(&mut self, pos: usize, val: u64) -> &mut Self;
+    fn term(&self, pos: usize) -> u64;
+    fn set_version(&mut self, pos: usize, val: u16) -> &mut Self;
+    fn version(&self, pos: usize) -> u16;
+    fn set_msg_type(&mut self, pos: usize, val: u16) -> &mut Self;
+    fn msg_type(&self, pos: usize) -> u16;
+    fn set_server(&mut self, pos: usize, server_id: u32) -> &mut Self;
+    fn server(&self, pos: usize) -> u32;
+    fn set_leader(&mut self, pos: usize, val: u32) -> &mut Self;
+    fn leader(&self, pos: usize) -> u32;
+    fn set_committed(&mut self, pos: usize) -> &mut Self;
+    fn committed(&self, pos: usize) -> u16;
+    fn set_start_time(&mut self, pos: usize, time: u64) -> &mut Self;
+    fn start_time(&self, pos: usize) -> u64;
+    fn set_committed_timestamp(&mut self, pos: usize, val: u64) -> &mut Self;
+    fn committed_timestamp(&mut self, pos: usize) -> u64;
+    fn set_file_id(&mut self, pos: usize, val: u32) -> &mut Self;
+    fn file_id(&self, pos: usize) -> u32;
+    fn set_file_position_offset(&mut self, pos: usize, val: u64) -> &mut Self;
+    fn file_position_offset(&self, pos: usize) -> u64;
+    fn set_max_message_id(&mut self, pos: usize, val: u64) -> &mut Self;
+    fn max_message_id(&self, pos: usize) -> u64;
+    fn set_length_of_commit(&mut self, pos: usize, val: u32) -> &mut Self;
+    fn length_of_commit(&self, pos: usize) -> u32;
+    fn save_term(&mut self, pos: usize, term: &TermCommit) -> &mut Self;
+    fn set_votes(&mut self, pos: usize, votes: u16) -> &mut Self;
+    fn inc_votes(&mut self, pos: usize) -> u16;
+    fn get_votes(&mut self, pos: usize) -> u16;
 }
 
 impl CommitFile for MemoryMappedInt {
     #[inline]
-    fn set_term(&mut self, pos: &usize, val: &u64) -> &mut Self {
-        let pos = TERM_ID_OFFSET + *pos;
-        self.put_u64(&pos, *val);
+    fn set_term(&mut self, pos: usize, val: u64) -> &mut Self {
+        let pos = TERM_ID_OFFSET + pos;
+        self.put_u64(pos, val);
         self
     }
 
     #[inline]
-    fn term(&self, pos: &usize) -> u64 {
-        let pos = TERM_ID_OFFSET + *pos;
-        self.get_u64(&pos)
+    fn term(&self, pos: usize) -> u64 {
+        let pos = TERM_ID_OFFSET + pos;
+        self.get_u64(pos)
     }
 
     #[inline]
-    fn set_version(&mut self, pos: &usize, val: &u16) -> &mut Self {
-        let pos = VERSION_OFFSET + *pos;
-        self.put_u16(&pos, *val);
+    fn set_version(&mut self, pos: usize, val: u16) -> &mut Self {
+        let pos = VERSION_OFFSET + pos;
+        self.put_u16(pos, val);
         self
     }
 
     #[inline]
-    fn version(&self, pos: &usize) -> u16 {
-        let pos = VERSION_OFFSET + *pos;
-        self.get_u16(&pos)
+    fn version(&self, pos: usize) -> u16 {
+        let pos = VERSION_OFFSET + pos;
+        self.get_u16(pos)
     }
 
     #[inline]
-    fn set_msg_type(&mut self, pos: &usize, val: &u16) -> &mut Self {
-        let pos = TYPE_OFFSET + *pos;
-        self.put_u16(&pos, *val);
+    fn set_msg_type(&mut self, pos: usize, val: u16) -> &mut Self {
+        let pos = TYPE_OFFSET + pos;
+        self.put_u16(pos, val);
         self
     }
 
     #[inline]
-    fn msg_type(&self, pos: &usize) -> u16 {
-        let pos = TYPE_OFFSET + *pos;
-        self.get_u16(&pos)
+    fn msg_type(&self, pos: usize) -> u16 {
+        let pos = TYPE_OFFSET + pos;
+        self.get_u16(pos)
     }
 
     #[inline]
-    fn set_server(&mut self, pos: &usize, server_id: &u32) -> &mut Self {
-        let pos = SERVER_OFFSET + *pos;
-        self.put_u32(&pos, *server_id);
+    fn set_server(&mut self, pos: usize, server_id: u32) -> &mut Self {
+        let pos = SERVER_OFFSET + pos;
+        self.put_u32(pos, server_id);
         self
     }
 
     #[inline]
-    fn server(&self, pos: &usize) -> u32 {
-        let pos = SERVER_OFFSET + *pos;
-        self.get_u32(&pos)
+    fn server(&self, pos: usize) -> u32 {
+        let pos = SERVER_OFFSET + pos;
+        self.get_u32(pos)
     }
 
     #[inline]
-    fn set_leader(&mut self, pos: &usize, val: &u32) -> &mut Self {
-        let pos = LEADER_OFFSET + *pos;
-        self.put_u32(&pos, *val);
+    fn set_leader(&mut self, pos: usize, val: u32) -> &mut Self {
+        let pos = LEADER_OFFSET + pos;
+        self.put_u32(pos, val);
         self
     }
 
     #[inline]
-    fn leader(&self, pos: &usize) -> u32 {
-        let pos = LEADER_OFFSET + *pos;
-        self.get_u32(&pos)
+    fn leader(&self, pos: usize) -> u32 {
+        let pos = LEADER_OFFSET + pos;
+        self.get_u32(pos)
     }
 
     #[inline]
-    fn set_committed(&mut self, pos: &usize) -> &mut Self {
-        let pos = COMMITTED + *pos;
-        self.put_u16(&pos, 1);
+    fn set_committed(&mut self, pos: usize) -> &mut Self {
+        let pos = COMMITTED + pos;
+        self.put_u16(pos, 1);
         self
     }
 
     #[inline]
-    fn committed(&self, pos: &usize) -> u16 {
-        let pos = COMMITTED + *pos;
-        self.get_u16(&pos)
+    fn committed(&self, pos: usize) -> u16 {
+        let pos = COMMITTED + pos;
+        self.get_u16(pos)
     }
 
     #[inline]
-    fn set_start_time(&mut self, pos: &usize, time: &u64) -> &mut Self {
-        let pos = START_TIMESTAMP + *pos;
-        self.put_u64(&pos, *time);
+    fn set_start_time(&mut self, pos: usize, time: u64) -> &mut Self {
+        let pos = START_TIMESTAMP + pos;
+        self.put_u64(pos, time);
         self
     }
 
     #[inline]
-    fn start_time(&self, pos: &usize) -> u64 {
-        let pos = START_TIMESTAMP + *pos;
-        self.get_u64(&pos)
+    fn start_time(&self, pos: usize) -> u64 {
+        let pos = START_TIMESTAMP + pos;
+        self.get_u64(pos)
     }
 
     #[inline]
-    fn set_committed_timestamp(&mut self, pos: &usize, val: &u64) -> &mut Self {
-        let pos = COMMITTED_TIMESTAMP + *pos;
-        self.put_u64(&pos, *val);
+    fn set_committed_timestamp(&mut self, pos: usize, val: u64) -> &mut Self {
+        let pos = COMMITTED_TIMESTAMP + pos;
+        self.put_u64(pos, val);
         self
     }
 
     #[inline]
-    fn committed_timestamp(&mut self, pos: &usize) -> u64 {
-        let pos = COMMITTED_TIMESTAMP + *pos;
-        self.get_u64(&pos)
+    fn committed_timestamp(&mut self, pos: usize) -> u64 {
+        let pos = COMMITTED_TIMESTAMP + pos;
+        self.get_u64(pos)
     }
 
     #[inline]
-    fn set_file_id(&mut self, pos: &usize, val: &u32) -> &mut Self {
-        let pos = FILE_ID + *pos;
-        self.put_u32(&pos, *val);
+    fn set_file_id(&mut self, pos: usize, val: u32) -> &mut Self {
+        let pos = FILE_ID + pos;
+        self.put_u32(pos, val);
         self
     }
 
     #[inline]
-    fn file_id(&self, pos: &usize) -> u32 {
-        let pos = FILE_ID + *pos;
-        self.get_u32(&pos)
+    fn file_id(&self, pos: usize) -> u32 {
+        let pos = FILE_ID + pos;
+        self.get_u32(pos)
     }
 
     #[inline]
-    fn set_file_position_offset(&mut self, pos: &usize, val: &u64) -> &mut Self {
-        let pos = FILE_POSITION_OFFSET + *pos;
-        self.put_u64(&pos, *val);
+    fn set_file_position_offset(&mut self, pos: usize, val: u64) -> &mut Self {
+        let pos = FILE_POSITION_OFFSET + pos;
+        self.put_u64(pos, val);
         self
     }
 
     #[inline]
-    fn file_position_offset(&self, pos: &usize) -> u64 {
-        let pos = FILE_POSITION_OFFSET + *pos;
-        self.get_u64(&pos)
+    fn file_position_offset(&self, pos: usize) -> u64 {
+        let pos = FILE_POSITION_OFFSET + pos;
+        self.get_u64(pos)
     }
 
     #[inline]
-    fn set_max_message_id(&mut self, pos: &usize, val: &u64) -> &mut Self {
-        let pos = MAX_MESSAGE_ID + *pos;
-        self.put_u64(&pos, *val);
+    fn set_max_message_id(&mut self, pos: usize, val: u64) -> &mut Self {
+        let pos = MAX_MESSAGE_ID + pos;
+        self.put_u64(pos, val);
         self
     }
 
     #[inline]
-    fn max_message_id(&self, pos: &usize) -> u64 {
-        let pos = MAX_MESSAGE_ID + *pos;
-        self.get_u64(&pos)
+    fn max_message_id(&self, pos: usize) -> u64 {
+        let pos = MAX_MESSAGE_ID + pos;
+        self.get_u64(pos)
     }
 
     #[inline]
-    fn set_length_of_commit(&mut self, pos: &usize, val: &u32) -> &mut Self {
-        let pos = LENGTH_OF_COMMIT + *pos;
-        self.put_u32(&pos, *val);
+    fn set_length_of_commit(&mut self, pos: usize, val: u32) -> &mut Self {
+        let pos = LENGTH_OF_COMMIT + pos;
+        self.put_u32(pos, val);
         self
     }
 
     #[inline]
-    fn length_of_commit(&self, pos: &usize) -> u32 {
-        let pos = LENGTH_OF_COMMIT + *pos;
-        self.get_u32(&pos)
+    fn length_of_commit(&self, pos: usize) -> u32 {
+        let pos = LENGTH_OF_COMMIT + pos;
+        self.get_u32(pos)
     }
 
     #[inline]
-    fn set_votes(&mut self, pos: &usize, votes: u16) -> &mut Self {
-        let pos = VOTES + *pos;
-        self.put_u16(&pos, votes);
+    fn set_votes(&mut self, pos: usize, votes: u16) -> &mut Self {
+        let pos = VOTES + pos;
+        self.put_u16(pos, votes);
         self
     }
 
     #[inline]
-    fn inc_votes(&mut self, pos: &usize) -> u16 {
-        let pos = VOTES + *pos;
-        let v = self.get_u16(&pos) + 1;
-        self.put_u16(&pos, v);
+    fn inc_votes(&mut self, pos: usize) -> u16 {
+        let pos = VOTES + pos;
+        let v = self.get_u16(pos) + 1;
+        self.put_u16(pos, v);
         v
     }
 
     #[inline]
-    fn get_votes(&mut self, pos: &usize) -> u16 {
-        let pos = VOTES + *pos;
-        self.get_u16(&pos)
+    fn get_votes(&mut self, pos: usize) -> u16 {
+        let pos = VOTES + pos;
+        self.get_u16(pos)
     }
 
     #[inline]
-    fn save_term(&mut self, pos: &usize, term: &TermCommit) -> &mut Self {
-        self.set_term(pos, &term.term_id)
-            .set_version(pos, &term.version)
-            .set_msg_type(pos, &term.type_id)
-            .set_server(pos, &term.server_id)
-            .set_leader(pos, &term.leader_id)
-            .set_start_time(pos, &term.timestamp)
-            .set_committed_timestamp(pos, &term.committed_timestamp)
-            .set_file_id(pos, &term.file_id)
-            .set_file_position_offset(pos, &term.file_position_offset)
-            .set_max_message_id(pos, &term.file_max_message_id)
-            .set_length_of_commit(pos, &term.length);
+    fn save_term(&mut self, pos: usize, term: &TermCommit) -> &mut Self {
+        self.set_term(pos, term.term_id)
+            .set_version(pos, term.version)
+            .set_msg_type(pos, term.type_id)
+            .set_server(pos, term.server_id)
+            .set_leader(pos, term.leader_id)
+            .set_start_time(pos, term.timestamp)
+            .set_committed_timestamp(pos, term.committed_timestamp)
+            .set_file_id(pos, term.file_id)
+            .set_file_position_offset(pos, term.file_position_offset)
+            .set_max_message_id(pos, term.file_max_message_id)
+            .set_length_of_commit(pos, term.length);
         if term.committed > 0 {
             self.set_committed(pos);
         }
@@ -495,9 +495,9 @@ impl PersistedMessageWriteStream {
     #[allow(dead_code)]
     fn write_pos(
         &mut self,
-        pos: &usize,
-        msg_type: &i32,
-        msg_id: &u64,
+        pos: usize,
+        msg_type: i32,
+        msg_id: u64,
         buffer: &[u8],
     ) -> crate::file::Result<usize> {
         self.buffer.write(pos, msg_type, msg_id, buffer)
@@ -511,24 +511,24 @@ impl PersistedMessageWriteStream {
     /// `buffer` - The buffer to write to the message buffer.
     fn add_message(
         &mut self,
-        msg_type: &i32,
-        msg_id: &u64,
+        msg_type: i32,
+        msg_id: u64,
         buffer: &[u8],
     ) -> crate::file::Result<(usize, u32)> {
         match self
             .buffer
-            .write(&self.current_pos, msg_type, msg_id, buffer)
+            .write(self.current_pos, msg_type, msg_id, buffer)
         {
             Ok(s) => {
                 self.current_pos = s;
                 self.max_message_id
-                    .store(*msg_id, atomic::Ordering::Release);
+                    .store(msg_id, atomic::Ordering::Release);
                 Ok((s, self.file_id))
             }
             Err(e) => match e {
                 file::Error::Full => {
                     self.buffer
-                        .write(&self.current_pos, &-1, &std::u64::MAX, &[0, 0])?;
+                        .write(self.current_pos, -1, std::u64::MAX, &[0, 0])?;
                     self.file_id += 1;
                     self.current_pos = 0;
                     let file = create_commit_name(
@@ -539,12 +539,12 @@ impl PersistedMessageWriteStream {
                     self.buffer = unsafe { MessageFileStore::open_write(&file, self.file_size)? };
                     match self
                         .buffer
-                        .write(&self.current_pos, msg_type, msg_id, buffer)
+                        .write(self.current_pos, msg_type, msg_id, buffer)
                     {
                         Ok(s) => {
                             self.current_pos += s;
                             self.max_message_id
-                                .store(*msg_id, atomic::Ordering::Release);
+                                .store(msg_id, atomic::Ordering::Release);
                             Ok((s, self.file_id))
                         }
                         Err(e) => Err(e),
@@ -635,7 +635,7 @@ where
 
     /// called to process the next message in the buffer.
     fn process_next(&mut self) -> file::Result<bool> {
-        match self.buffer.read_new(&self.current_pos) {
+        match self.buffer.read_new(self.current_pos) {
             Ok(msg) => {
                 if msg.message_id() <= self.max_message_id.load(atomic::Ordering::Relaxed) {
                     self.current_pos = msg.next_pos();
@@ -698,7 +698,7 @@ fn find_message(
 ) -> crate::file::Result<FindMessageResult> {
     let mut pos = 0;
     loop {
-        match buffer.read_new(&pos) {
+        match buffer.read_new(pos) {
             Ok(msg) => {
                 if msg.message_id() == 0 {
                     break Ok(FindMessageResult::End(pos));
@@ -736,7 +736,7 @@ fn find_end_of_buffer(buffer: &MessageFileStoreRead) -> crate::file::Result<Find
     let mut pos = 0;
     let mut last_id = 0;
     loop {
-        match buffer.read_new(&pos) {
+        match buffer.read_new(pos) {
             Ok(msg) => {
                 if msg.message_id() == 0 {
                     break Ok(FindEmptySlotResult::Pos(pos, last_id));
@@ -1175,7 +1175,7 @@ impl MessageIterator {
         let reader = unsafe { MessageFileStore::open_readonly(&file.path) }?;
         let mut pos = 0;
         loop {
-            let msg = reader.read_new(&pos)?;
+            let msg = reader.read_new(pos)?;
             if msg.message_id() >= start_message_id || msg.message_id() == 0 {
                 break;
             } else {
@@ -1220,7 +1220,7 @@ impl MessageIterator {
         if self.number == 0 {
             Ok(NextResult::More)
         } else {
-            match self.current_reader.read_new(&self.pos) {
+            match self.current_reader.read_new(self.pos) {
                 Ok(reader) => {
                     if reader.message_id() <= self.max_commit_id {
                         self.pos = reader.next_pos();
@@ -1358,9 +1358,9 @@ impl FileCollection {
                     .create(false)
                     .open(path)?;
                 let buffer = unsafe { MemoryMappedInt::open(file) }?;
-                let term_id = buffer.term(&0); // Get the starting message.
-                let message_id = buffer.max_message_id(&0);
-                let time = buffer.start_time(&0);
+                let term_id = buffer.term(0); // Get the starting message.
+                let message_id = buffer.max_message_id(0);
+                let time = buffer.start_time(0);
                 if time > 0 {
                     self.commit_files.lock().unwrap().push(CommitFileInfo::new(
                         path_str.to_owned(),
@@ -1527,14 +1527,14 @@ pub(crate) fn find_last_commit_pos(
             let mut last_max_message = 0;
             let start_term_id = file_commit.term_start;
             loop {
-                let term = buffer.term(&pos);
+                let term = buffer.term(pos);
                 if term == 0 {
                     break;
                 } else {
-                    if buffer.committed(&pos) > 0 {
+                    if buffer.committed(pos) > 0 {
                         last_term = term;
                         found_commit = true;
-                        last_max_message = buffer.max_message_id(&pos);
+                        last_max_message = buffer.max_message_id(pos);
                         pos += COMMIT_SIZE as usize;
                     } else {
                         break;
@@ -1592,11 +1592,11 @@ fn find_last_term(commit_files: &Arc<Mutex<Vec<CommitFileInfo>>>) -> LastTermPos
             let mut found_commit = false;
             let start_term_id = file_commit.term_start;
             loop {
-                let term = buffer.term(&pos);
+                let term = buffer.term(pos);
                 if term == 0 {
                     break;
                 } else {
-                    if buffer.term(&pos) > 0 {
+                    if buffer.term(pos) > 0 {
                         last_term = term;
                         found_commit = true;
                         pos += COMMIT_SIZE as usize;
@@ -1663,7 +1663,7 @@ fn write_thread_single(
                     |msg_type, bytes| {
                         last_msg_id += 1;
                         let (pos, file) = file_buffer
-                            .add_message(&msg_type, &last_msg_id, bytes)
+                            .add_message(msg_type, last_msg_id, bytes)
                             .unwrap();
                         let _write_out_pos = pos;
                         let _write_out_file = file;
@@ -1802,9 +1802,9 @@ fn commit_thread_single(
                         panic!("Bug in finding the position to read in.");
                     }
                 };
-                let msg_file_id = commit_term.buffer.file_id(&term_pos);
-                let position = commit_term.buffer.file_position_offset(&term_pos) as usize
-                    + commit_term.buffer.length_of_commit(&term_pos) as usize;
+                let msg_file_id = commit_term.buffer.file_id(term_pos);
+                let position = commit_term.buffer.file_position_offset(term_pos) as usize
+                    + commit_term.buffer.length_of_commit(term_pos) as usize;
                 let path = create_event_name(&file_storage_directory, &file_prefix, &msg_file_id);
                 (
                     unsafe { MessageFileStore::open_readonly(&path).unwrap() },
@@ -1821,7 +1821,7 @@ fn commit_thread_single(
                 if stop.load(atomic::Ordering::Acquire) > 0 {
                     break 0;
                 } else {
-                    match message_file.read_block(&read_pos, &std::u64::MAX, &0x10000) {
+                    match message_file.read_block(read_pos, std::u64::MAX, 0x10000) {
                         Ok(result) => {
                             let new_term = current_term + 1;
                             let current_time = SystemTime::now();
@@ -1843,7 +1843,7 @@ fn commit_thread_single(
                             };
                             match term_file.calculate_pos(&new_term) {
                                 TermPosResult::Pos(p) => {
-                                    term_file.buffer.save_term(&p, &term);
+                                    term_file.buffer.save_term(p, &term);
                                     max_message
                                         .store(result.message_id_end, atomic::Ordering::Relaxed);
                                     read_pos = result.next_pos;
@@ -1967,7 +1967,7 @@ where
             if stop.load(atomic::Ordering::Relaxed) > 0 {
                 break 0;
             } else {
-                match read.read_new(&read_pos) {
+                match read.read_new(read_pos) {
                     Ok(result) => {
                         if result.msg_type_id() > 0 {
                             if result.message_id() <= max_message_id.load(atomic::Ordering::Relaxed)
@@ -2250,7 +2250,7 @@ mod tests {
         )
         .unwrap();
         let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
-        writer.add_message(&1, &1, &bytes[0..8]).unwrap();
+        writer.add_message(1, 1, &bytes[0..8]).unwrap();
         writer.flush().unwrap();
         let reader = unsafe {
             MessageFileStore::open_readonly(&create_event_name(

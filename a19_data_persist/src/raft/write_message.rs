@@ -22,7 +22,7 @@ impl MessageWriteFileAppend {
     /// `file_storage_directory` - The file storage directory.
     /// `file_prefix` - The file prefix.
     /// `file_size` - The file size for the messages.
-    pub(crate) fn open(file_storage_directory: String, file_prefix: String, file_size: usize) {}
+    pub(crate) fn open(file_storage_directory: String, file_prefix: String, file_id: u32, file_size: usize) {}
 }
 
 /// Used for random writes.
@@ -46,12 +46,15 @@ pub(crate) struct MessageWriteCollection {
 }
 
 impl MessageWriteCollection {
+
     /// Opens a directory and reads in the files containing the messages.
     /// # Arguments
     /// `file_storage_directory` - The directory containing the files.
     /// `file_prefix` - The file prefix.
+    /// `file_size` - The size of the file being created.
     /// # Returns
     /// The message write collection.
+    #[allow(dead_code)]
     pub(crate) fn open_dir(
         file_storage_directory: &str,
         file_prefix: &str,
@@ -100,6 +103,7 @@ impl MessageWriteCollection {
     /// `file_id` - The id of the file to get.
     /// # Returns
     /// The file message file info.
+    #[allow(dead_code)]
     pub(crate) fn get_message_file<'a>(&'a self, file_id: &u32) -> Option<&'a Rc<MessageFileInfo>> {
         self.files.get(file_id)
     }
@@ -109,6 +113,7 @@ impl MessageWriteCollection {
     /// `max_message_id` - The maximum message id to stop at.
     /// # Returns
     /// A tuple containing the file to write to and the message file information.
+    #[allow(dead_code)]
     pub(crate) fn get_current_append<'a>(
         &'a mut self,
         max_message_id: u64,
@@ -206,11 +211,11 @@ impl MessageWriteAppend {
         let mut pos = 0;
         let buffer = unsafe { MessageFileStore::open_readonly(&msg_file.path)? };
         loop {
-            match buffer.read_new(&pos) {
+            match buffer.read_new(pos) {
                 Ok(msg) => {
                     if msg.message_id() >= last_commited_id {
                         pos = msg.next_pos();
-                        if buffer.is_end(&pos) {
+                        if buffer.is_end(pos) {
                             break Ok(OpenFileResult::Full);
                         } else {
                             break Ok(OpenFileResult::Opened(Self {
@@ -243,7 +248,8 @@ impl MessageWriteAppend {
     }
 
     /// Used to append a message to the current log.
-    pub(crate) fn append(&mut self, message_id: &u64, msg_type_id: &u32, bytes: &[u8]) {}
+    pub(crate) fn append(&mut self, message_id: u64, msg_type_id: u32, bytes: &[u8]) {
+    }
 }
 
 /// Used to crate a new message file.
@@ -258,10 +264,12 @@ fn new_message_file(
     let path = create_commit_name(file_storage_directory, file_prefix, &file_id);
     let path_p = Path::new(&path);
     if path_p.exists() {
+        // Check and see if we are able to read the file in.
         let (read, _) = unsafe { MessageFileStore::new(&path, file_size)? };
         match read.read(0, |_, _, _| {}) {
             Ok(_) => Err(crate::file::Error::AlreadyExists)?,
             _ => {
+                // Not able to so delete the file so we can create it.
                 remove_file(&path)?;
             }
         }
@@ -342,7 +350,7 @@ mod test {
         cleanup();
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-        r.write(&0, &1, &1, &[2; 50]).unwrap();
+        r.write(0, 1, 1, &[2; 50]).unwrap();
         match new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000) {
             Ok(_) => assert!(false),
             Err(e) => match e {
@@ -363,7 +371,7 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.write(0, 1, 1, &[2; 50]).unwrap();
             r.flush().unwrap();
         }
         let path = create_commit_name(FILE_STORAGE_DIRECTORY, FILE_PREFIX, &1);
@@ -380,12 +388,12 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.write(0, 1, 1, &[2; 50]).unwrap();
             r.flush().unwrap();
 
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &2, &[2; 50]).unwrap();
+            r.write(0, 1, 2, &[2; 50]).unwrap();
             r.flush().unwrap();
         }
         let message_file =
@@ -427,12 +435,12 @@ mod test {
         {
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &1, &[2; 50]).unwrap();
+            r.write(0, 1, 1, &[2; 50]).unwrap();
             r.flush().unwrap();
 
             let (file_info, r) =
                 new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 2, 1, 32 * 1000).unwrap();
-            r.write(&0, &1, &2, &[2; 50]).unwrap();
+            r.write(0, 1, 2, &[2; 50]).unwrap();
             r.flush().unwrap();
         }
         let mut message_file =
@@ -448,7 +456,7 @@ mod test {
         cleanup();
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 1000).unwrap();
-        r.write(&0, &1, &1, &[2; 50]).unwrap();
+        r.write(0, 1, 1, &[2; 50]).unwrap();
         r.flush().unwrap();
         let writer = MessageWriteAppend::open(Rc::new(file_info), 1, r).unwrap();
         match writer {
@@ -464,8 +472,8 @@ mod test {
         let buffer = [2; 31960];
         let (file_info, r) =
             new_message_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, 32 * 100).unwrap();
-        let next_pos = r.write(&0, &1, &1, &[2; 3150]).unwrap();
-        r.write(&next_pos, &1, &2, &[2; 30]).unwrap_or_default();
+        let next_pos = r.write(0, 1, 1, &[2; 3150]).unwrap();
+        r.write(next_pos, 1, 2, &[2; 30]).unwrap_or_default();
         r.flush().unwrap();
         let writer = MessageWriteAppend::open(Rc::new(file_info), 1, r).unwrap();
         match writer {

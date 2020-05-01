@@ -97,19 +97,22 @@ const PADDING_MESSAGE_TYPE: i32 = -1;
 /// Gets the size offset.
 /// # Arguments
 /// `position` - The position to calculate the offset from.
-fn size_offset(position: &usize) -> usize {
-    *position
+#[inline]
+fn size_offset(position: usize) -> usize {
+    position
 }
 
 /// Gets the message type offset.
 /// # Arguments
 /// `position` - The position to calculate the offset from.
-fn message_type_offset(position: &usize) -> usize {
-    *position + MESSAGE_TYPE_OFFSET
+#[inline]
+fn message_type_offset(position: usize) -> usize {
+    position + MESSAGE_TYPE_OFFSET
 }
 
-fn message_body_offset(position: &usize) -> usize {
-    *position + MESSAGE_BODY_OFFSET
+#[inline]
+fn message_body_offset(position: usize) -> usize {
+    position + MESSAGE_BODY_OFFSET
 }
 
 /// Buffer format
@@ -191,13 +194,13 @@ impl RingBuffer for ManyToOneBufferInt {
             match index {
                 Some(i) => {
                     let record_length_i = record_length as i32;
-                    self.buffer.put_i32(&size_offset(&i), -record_length_i);
+                    self.buffer.put_i32(size_offset(i), -record_length_i);
                     fence(Ordering::Release);
 
-                    self.buffer.put_i32(&message_type_offset(&i), msg_type_id);
-                    self.buffer.write_bytes(&message_body_offset(&i), buffer);
+                    self.buffer.put_i32(message_type_offset(i), msg_type_id);
+                    self.buffer.write_bytes(message_body_offset(i), buffer);
                     self.buffer
-                        .put_i32_volatile(&size_offset(&i), &record_length_i);
+                        .put_i32_volatile(size_offset(i), record_length_i);
                     Some(i)
                 }
                 None => None,
@@ -224,20 +227,20 @@ impl RingBuffer for ManyToOneBufferInt {
                 break;
             } else {
                 let record_index = head_index + bytes_read;
-                let record_length = self.buffer.get_i32_volatile(&size_offset(&record_index));
+                let record_length = self.buffer.get_i32_volatile(size_offset(record_index));
                 if record_length <= 0 {
                     break;
                 } else {
                     bytes_read += next_pos(record_length as usize, ALIGNMENT);
 
-                    let message_type = self.buffer.get_i32(&message_type_offset(&record_index));
+                    let message_type = self.buffer.get_i32(message_type_offset(record_index));
                     if message_type == PADDING_MESSAGE_TYPE {
                         // Goto the next message.
                     } else {
                         let record_length_u = record_length as usize;
                         let byte_arrays = self.buffer.get_bytes(
-                            &(record_index + HEADER_SIZE),
-                            &(record_length_u - HEADER_SIZE),
+                            record_index + HEADER_SIZE,
+                            record_length_u - HEADER_SIZE,
                         );
                         act(message_type, byte_arrays);
                         messages_read += 1;
@@ -258,7 +261,7 @@ impl RingBuffer for ManyToOneBufferInt {
 
     fn read_completed(&mut self, read_info: &BytesReadInfo) {
         self.buffer
-            .set_bytes(&read_info.start, &read_info.bytes_read, 0);
+            .set_bytes(read_info.start, read_info.bytes_read, 0);
         self.consumer
             .counter
             .store(read_info.start + read_info.bytes_read, Ordering::Release);
@@ -314,15 +317,15 @@ impl ManyToOneBufferInt {
                             Ordering::Relaxed,
                         ) {
                             Ok(_) => {
-                                self.buffer.put_i32(&size_offset(&tail_index), -1);
+                                self.buffer.put_i32(size_offset(tail_index), -1);
                                 fence(Ordering::Release);
 
                                 self.buffer.put_i32(
-                                    &message_type_offset(&tail_index),
+                                    message_type_offset(tail_index),
                                     PADDING_MESSAGE_TYPE,
                                 );
                                 self.buffer
-                                    .put_i32_volatile(&size_offset(&tail_index), &padding);
+                                    .put_i32_volatile(size_offset(tail_index), padding);
                                 break Some(0);
                             }
                             Err(_) => {

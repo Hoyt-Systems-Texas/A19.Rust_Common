@@ -2,9 +2,7 @@ use crate::raft::network::{NetworkSend, NetworkSendType};
 use crate::raft::*;
 use crate::raft::{CommitFile, TermFile};
 use a19_concurrent::buffer::mmap_buffer::MemoryMappedInt;
-use a19_concurrent::buffer::ring_buffer::{
-    ManyToOneBufferReader, ManyToOneBufferWriter,
-};
+use a19_concurrent::buffer::ring_buffer::ManyToOneBufferWriter;
 use a19_concurrent::buffer::next_pos;
 use a19_concurrent::queue::mpsc_queue::MpscQueueWrap;
 use a19_concurrent::queue::skip_queue::SkipQueueReader;
@@ -231,9 +229,9 @@ fn create_state_machine(
                 panic!("Bug in finding the position to read in.");
             }
         };
-        let msg_file_id = commit_term.buffer.file_id(&term_pos);
-        let position = commit_term.buffer.file_position_offset(&term_pos) as usize
-            + commit_term.buffer.length_of_commit(&term_pos) as usize;
+        let msg_file_id = commit_term.buffer.file_id(term_pos);
+        let position = commit_term.buffer.file_position_offset(term_pos) as usize
+            + commit_term.buffer.length_of_commit(term_pos) as usize;
         let path = create_event_name(&file_storage_directory, &file_prefix, &msg_file_id);
         (
             unsafe { MessageFileStore::open_readonly(&path).unwrap() },
@@ -325,10 +323,10 @@ impl RaftStateMachine {
                             // Update to that term as committed :)
                             match self.commit_term_file.calculate_pos(&current_term) {
                                 TermPosResult::Pos(pos) => {
-                                    self.commit_term_file.buffer.set_committed(&pos);
+                                    self.commit_term_file.buffer.set_committed(pos);
                                     self.commit_term_file
                                         .buffer
-                                        .set_committed_timestamp(&pos, &current_time_ms());
+                                        .set_committed_timestamp(pos, current_time_ms());
                                     current_term += 1;
                                     break;
                                 }
@@ -359,7 +357,7 @@ impl RaftStateMachine {
             // Update the match id.
             match self.commit_term_file.calculate_pos(&term_id) {
                 TermPosResult::Pos(pos) => {
-                    let id = self.commit_term_file.buffer.max_message_id(&pos);
+                    let id = self.commit_term_file.buffer.max_message_id(pos);
                     self.max_message_id.store(id, atomic::Ordering::Relaxed);
                 }
                 _ => {
@@ -790,18 +788,18 @@ mod test {
         state_machine
             .commit_term_file
             .buffer
-            .write_bytes(&0, &zeros);
+            .write_bytes(0, &zeros);
         state_machine.current_state = RaftState::Follower { leader: 2 };
         state_machine.process_event(RaftEvent::Commited {
             server_id: 2,
             term_id,
         });
 
-        let commited = state_machine.commit_term_file.buffer.committed(&pos);
+        let commited = state_machine.commit_term_file.buffer.committed(pos);
         let time_stamp = state_machine
             .commit_term_file
             .buffer
-            .committed_timestamp(&pos);
+            .committed_timestamp(pos);
         assert!(commited > 0);
         assert!(time_stamp > 0);
     }
@@ -822,7 +820,7 @@ mod test {
         state_machine
             .commit_term_file
             .buffer
-            .write_bytes(&0, &zeros);
+            .write_bytes(0, &zeros);
         let mut next_term_file = create_term_file(
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
@@ -832,7 +830,7 @@ mod test {
         );
         let mut first_term_file =
             create_term_file(FILE_STORAGE_DIRECTORY, FILE_PREFIX, 1, 1, COMMIT_FILE_SIZE);
-        next_term_file.buffer.write_bytes(&0, &zeros);
+        next_term_file.buffer.write_bytes(0, &zeros);
 
         state_machine.current_state = RaftState::Follower { leader: 2 };
         state_machine.process_event(RaftEvent::Commited {
@@ -841,15 +839,15 @@ mod test {
         });
 
         assert_eq!(state_machine.commit_term_file.file_id, 2);
-        let commited = next_term_file.buffer.committed(&0);
-        let timestamp = next_term_file.buffer.committed_timestamp(&0);
+        let commited = next_term_file.buffer.committed(0);
+        let timestamp = next_term_file.buffer.committed_timestamp(0);
         assert!(commited > 0);
         assert!(timestamp > 0);
 
         for i in 50..128 {
             let pos = (COMMIT_SIZE * i) as usize;
-            let committed = first_term_file.buffer.committed(&pos);
-            let timestamp = first_term_file.buffer.committed_timestamp(&pos);
+            let committed = first_term_file.buffer.committed(pos);
+            let timestamp = first_term_file.buffer.committed_timestamp(pos);
             assert!(committed > 0);
             assert!(timestamp > 0);
         }
@@ -870,7 +868,7 @@ mod test {
         state_machine
             .commit_term_file
             .buffer
-            .write_bytes(&0, &zeros);
+            .write_bytes(0, &zeros);
 
         state_machine.process_event(RaftEvent::Pong {
             server_id: 2,
@@ -897,11 +895,11 @@ mod test {
             }
         }
         let pos = 0;
-        let commited = state_machine.commit_term_file.buffer.committed(&pos);
+        let commited = state_machine.commit_term_file.buffer.committed(pos);
         let timestamp = state_machine
             .commit_term_file
             .buffer
-            .committed_timestamp(&pos);
+            .committed_timestamp(pos);
 
         assert!(commited > 0);
         assert!(timestamp > 0);

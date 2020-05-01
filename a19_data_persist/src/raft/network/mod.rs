@@ -589,7 +589,7 @@ impl RaftDataFrame {
         BigEndian::write_u32(&mut self.msg_buffer[20..24], msg.file_id);
         BigEndian::write_u64(&mut self.msg_buffer[24..32], msg.file_offset as u64);
         let copy_from = message_file_store
-            .read_section(&msg.file_offset, &msg.length)
+            .read_section(msg.file_offset, msg.length)
             .unwrap(); // Potential data corruption bug crash!
         let copy_to = &mut self.msg_buffer[32..msg.length];
         copy_to.clone_from_slice(copy_from);
