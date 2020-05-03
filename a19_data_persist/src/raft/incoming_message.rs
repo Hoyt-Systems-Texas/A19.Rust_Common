@@ -1,3 +1,4 @@
+use std::sync::atomic::{ AtomicU32, Ordering };
 use crate::raft::write_message::*;
 use a19_concurrent::buffer::ring_buffer::{
     create_many_to_one, ManyToOneBufferReader, ManyToOneBufferWriter,
@@ -20,12 +21,22 @@ pub(crate) enum IncomingEvt {
     NoHandler,
 }
 
+const LEADER: u32 = 1;
+const LEADER_TO_FOLLOWER: u32 = 2;
+const FOLLOWER: u32 = 3;
+const FOLLOWER_TO_LEADER: u32 = 4;
+const NO_HANDER: u32 = 5;
+
 #[derive(Debug)]
 enum IncomingState {
     /// This server is the leader and needs to append message directly to the buffer.
     Leader { writer: MessageWriteAppend },
+    /// When we are changing over form leader to follower.  During this time we are copying over the data in the message buffer to the outgoing buffer.
+    LeaderToFollower { server_id: u32},
     /// Send messages to the current leader.
     Follower { server_id: u32 },
+    /// Copy over the outgoing messages to the message buffer.  During this state not accepting new messages until the copying is done.
+    FollowerToLeader,
     /// Hold onto the messages.
     NoHandler,
 }
@@ -33,9 +44,9 @@ enum IncomingState {
 impl PartialEq for IncomingState {
     fn eq(&self, other: &IncomingState) -> bool {
         match self {
-            IncomingState::Follower { server_id } => {
+            IncomingState::Follower { server_id: c_server_id } => {
                 if let IncomingState::Follower { server_id } = other {
-                    server_id == server_id
+                    c_server_id == server_id
                 } else {
                     false
                 }
@@ -49,6 +60,20 @@ impl PartialEq for IncomingState {
             }
             IncomingState::Leader { writer: _ } => {
                 if let IncomingState::Leader { writer: _ } = other {
+                    true
+                } else {
+                    false
+                }
+            }
+            IncomingState::LeaderToFollower{ server_id: c_server_id } => {
+                if let IncomingState::LeaderToFollower { server_id } = other {
+                    c_server_id == server_id
+                } else {
+                    false
+                }
+            }
+            IncomingState::FollowerToLeader => {
+                if let IncomingState::FollowerToLeader = other {
                     true
                 } else {
                     false
@@ -177,6 +202,12 @@ impl IncomingMessageProcessor {
                         self.change_no_handler();
                     }
                 }
+            },
+            IncomingState::FollowerToLeader => {
+                
+            }
+            IncomingState::LeaderToFollower{server_id} => {
+                
             }
         }
     }
