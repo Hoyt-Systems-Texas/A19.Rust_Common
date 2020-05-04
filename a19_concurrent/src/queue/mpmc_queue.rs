@@ -92,7 +92,6 @@ unsafe impl<T> Send for MpmcQueue<T> {}
 impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T> {
-        let mut i: u64 = 0;
         loop {
             let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
             let p_index = self.producer.counter.load(Ordering::Relaxed);
@@ -112,12 +111,14 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                         ) {
                             Ok(_) => {
                                 let v = replace(&mut node.value, Option::None);
-                                node.id.store(0, Ordering::Relaxed);
+                                node.id.store(0, Ordering::Release);
                                 break v;
                             }
                             Err(_) => {}
                         }
                     } else {
+                        thread::yield_now()
+                        /*
                         i = i + 1;
                         if i > 1_000_000_000 {
                             panic!(format!(
@@ -125,6 +126,7 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                                 s_index, p_index, node_id, last_pos, self.capacity
                             ))
                         }
+                        */
                     }
                 }
             } else {
@@ -156,14 +158,14 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                 ) {
                     Ok(_) => {
                         for i in 0..request {
-                            let mut fail_count: u64 = 0;
+                            let pos = self.pos(s_index + i);
+                            let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                             loop {
-                                let pos = self.pos(s_index + i);
-                                let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                                let node_id = node.id.load(Ordering::Acquire);
+                                let node_id = node.id.load(Ordering::Relaxed);
                                 if node_id == s_index + i {
                                     let v = replace(&mut node.value, Option::None);
-                                    node.id.store(0, Ordering::Relaxed);
+                                    // Need a Store/Store barrier to make sure this is done last.
+                                    node.id.store(0, Ordering::Release);
                                     match v {
                                         None => panic!("Found a None!"),
                                         Some(t_value) => act(t_value),
@@ -171,10 +173,12 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                                     break;
                                 } else {
                                     thread::yield_now();
+                                    /*
                                     fail_count = fail_count + 1;
                                     if fail_count > 1_000_000_000 {
                                         panic!("Failed to get the node!");
                                     }
+                                    */
                                 }
                             }
                         }
@@ -207,7 +211,8 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     ) {
                         Ok(_) => {
                             node.value = Some(value);
-                            node.id.store(p_index, Ordering::Relaxed);
+                            // Need a Store/Store barrier to make sure this is done last.
+                            node.id.store(p_index, Ordering::Release);
                             break true;
                         }
                         Err(_) => {}
