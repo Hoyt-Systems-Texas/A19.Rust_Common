@@ -7,7 +7,7 @@ use hmac::{ Hmac, Mac };
 use sha2::Sha512;
 use thiserror::Error;
 use crypto_mac::{ InvalidKeyLength, MacResult };
-use generic_array::{ GenericArray };
+use generic_array::GenericArray;
 
 const SIG_START: usize = 0;
 const SIG_END: usize = 64;
