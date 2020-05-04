@@ -36,7 +36,7 @@ pub enum SignDataError {
 impl From<InvalidKeyLength> for SignDataError {
 
     fn from(s: InvalidKeyLength) -> Self {
-        SignDataError::KeySize(InvalidKeyLength)
+        SignDataError::KeySize(s)
     }
 }
 
