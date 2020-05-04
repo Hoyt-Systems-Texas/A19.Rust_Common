@@ -11,4 +11,5 @@ members = [
     "a19_messaging_server",
     "a19_messaging_client",
     "a19_tokenizer",
+    "a19_security",
 ]
