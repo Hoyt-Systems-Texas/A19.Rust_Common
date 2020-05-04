@@ -118,15 +118,18 @@ impl<T> MpscQueue<T> {
         if p_index > s_index {
             let last_pos = self.pos(s_index);
             let node = unsafe { self.ring_buffer.get_unchecked(last_pos) };
-            let node_id = node.id.load(Ordering::Acquire);
-            // Verify the node id matches the index id.
-            if node_id == s_index {
-                match &node.value {
-                    Some(value) => Some(value),
-                    None => None,
+            loop {
+                // Since we are looping can use relaxed ordering.
+                let node_id = node.id.load(Ordering::Relaxed);
+                // Verify the node id matches the index id.
+                if node_id == s_index {
+                    match &node.value {
+                        Some(value) => break Some(value),
+                        _ => {},
+                    }
+                } else {
+                    thread::yield_now()
                 }
-            } else {
-                None
             }
         } else {
             None
@@ -138,36 +141,38 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T> {
         let mut i: u64 = 0;
-        loop {
-            let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
-            let p_index = self.producer.counter.load(Ordering::Relaxed);
-            if p_index > s_index {
-                unsafe {
-                    let last_pos = self.pos(s_index);
-                    let node = self.ring_buffer.get_unchecked_mut(last_pos);
-                    let node_id = node.id.load(Ordering::Acquire);
-                    // Verify the node id matches the index id.
-                    if node_id == s_index {
-                        // Try and claim the slot.
-                        self.sequence_number
-                            .counter
-                            .store(s_index + 1, Ordering::Relaxed);
-                        let v = replace(&mut node.value, Option::None);
-                        node.id.store(0, Ordering::Relaxed);
-                        break v;
-                    } else {
-                        i = i + 1;
-                        if i > 1_000_000_000 {
-                            panic!(format!(
-                                "Got stuck on {}:{}:{}:{}:{}",
-                                s_index, p_index, node_id, last_pos, self.capacity
-                            ))
-                        }
+        let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
+        let p_index = self.producer.counter.load(Ordering::Relaxed);
+        if p_index > s_index {
+            let last_pos = self.pos(s_index);
+            let node = unsafe {self.ring_buffer.get_unchecked_mut(last_pos)};
+            loop {
+                // Since we are going around in a loop can use relaxed.
+                let node_id = node.id.load(Ordering::Relaxed);
+                // Verify the node id matches the index id.
+                if node_id == s_index {
+                    self.sequence_number
+                        .counter
+                        .store(s_index + 1, Ordering::Relaxed);
+                    let v = replace(&mut node.value, Option::None);
+                    // Need a StoreStore barrier so this operation goes last.
+                    node.id.store(0, Ordering::Release);
+                    break v;
+                } else {
+                    thread::yield_now();
+                    /*
+                    i = i + 1;
+                    if i > 1_000_000_000 {
+                        panic!(format!(
+                            "Got stuck on {}:{}:{}:{}:{}",
+                            s_index, p_index, node_id, last_pos, self.capacity
+                        ))
                     }
+                    */
                 }
-            } else {
-                break None;
             }
+        } else {
+            None
         }
     }
 
@@ -194,10 +199,11 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                     loop {
                         let pos = self.pos(s_index + i);
                         let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                        let node_id = node.id.load(Ordering::Acquire);
+                        let node_id = node.id.load(Ordering::Relaxed);
                         if node_id == s_index + i {
                             let v = replace(&mut node.value, Option::None);
-                            node.id.store(0, Ordering::Relaxed);
+                            // Need a StoreStore barrier since we need this done last.
+                            node.id.store(0, Ordering::Release);
                             match v {
                                 None => panic!("Found a None!"),
                                 Some(t_value) => act(t_value),
@@ -228,7 +234,8 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
             if p_index < capacity || p_index - capacity < c_index {
                 let pos = self.pos(p_index);
                 let mut node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                if node.id.load(Ordering::Acquire) == 0 {
+                // since we are looping don't care if the value is stale since we will eventually get the correct value.
+                if node.id.load(Ordering::Relaxed) == 0 {
                     match self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
@@ -237,7 +244,8 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                     ) {
                         Ok(_) => {
                             node.value = Some(value);
-                            node.id.store(p_index, Ordering::Relaxed);
+                            // Need a StoreStore barrier to prevent reordering of the op above.
+                            node.id.store(p_index, Ordering::Release);
                             break true;
                         }
                         Err(_) => {}
@@ -279,7 +287,7 @@ mod tests {
         let queue: Arc<MpscQueueWrap<usize>> = Arc::new(write);
         let write_thread_num = 2;
         let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num);
-        let spins: usize = 10_000_000;
+        let spins: usize = 12_000_000;
         for _ in 0..write_thread_num {
             let write_queue = queue.clone();
             let write_thread = thread::spawn(move || {
