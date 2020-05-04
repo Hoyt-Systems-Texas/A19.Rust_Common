@@ -8,21 +8,28 @@ const READER: u32 = 1;
 const WRITER_PENDING: u32 = 2;
 const WRITER: u32 = 3;
 
-pub trait ApplyChanges<COL, EVENT> {
-    fn apply(&self, map: &mut COL, event: &EVENT);
+pub trait ConcurrentCollection {
+    type Event;
+    type Context: Clone;
+
+    /// Used to create the collection we are updating.
+    fn create(context: Self::Context) -> Self;
+
+    /// Applies an event on the data structure.
+    fn apply(&mut self, event: &Self::Event);
 }
 
-struct CollectionContainer<COL, EVENT> {
-    col: COL,
+struct CollectionContainer<C: ConcurrentCollection> {
+    col: C,
     reader_count: AtomicU32,
     state: AtomicU32,
-    event_stream: VecDeque<EVENT>,
+    event_stream: VecDeque<C::Event>,
 }
 
-impl<COL, EVENT> CollectionContainer<COL, EVENT> {
-    fn new(col: COL, state: u32, event_stream_size: usize) -> Self {
+impl<C: ConcurrentCollection> CollectionContainer<C> {
+    fn new(context: C::Context, state: u32, event_stream_size: usize) -> Self {
         CollectionContainer {
-            col,
+            col: C::create(context),
             reader_count: AtomicU32::new(0),
             state: AtomicU32::new(state),
             event_stream: VecDeque::with_capacity(event_stream_size),
@@ -30,36 +37,30 @@ impl<COL, EVENT> CollectionContainer<COL, EVENT> {
     }
 }
 
-unsafe impl<COL, EVENT> Sync for CollectionContainer<COL, EVENT> {}
-unsafe impl<COL, EVENT> Send for CollectionContainer<COL, EVENT> {}
+unsafe impl<C: ConcurrentCollection> Sync for CollectionContainer<C> {}
+unsafe impl<C: ConcurrentCollection> Send for CollectionContainer<C> {}
 
 /// Represents a generic collection you can apply an event stream to.
-struct MrswCollection<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> {
+struct MrswCollection<C: ConcurrentCollection> {
     /// The current reader.
-    current_reader: AtomicPtr<CollectionContainer<COL, EVENT>>,
+    current_reader: AtomicPtr<CollectionContainer<C>>,
     /// The action to run to apply the changes.
-    current_writer: AtomicPtr<CollectionContainer<COL, EVENT>>,
-    col1: CollectionContainer<COL, EVENT>,
-    col2: CollectionContainer<COL, EVENT>,
-    apply_change: CHANGE,
+    current_writer: AtomicPtr<CollectionContainer<C>>,
+    col1: CollectionContainer<C>,
+    col2: CollectionContainer<C>,
 }
 
-pub fn create_mrsw_collection<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>>(
-    col1: COL,
-    col2: COL,
-    apply_change: CHANGE,
-) -> (
-    MrswCollectionReader<COL, EVENT, CHANGE>,
-    MrswCollectionWriter<COL, EVENT, CHANGE>,
+pub fn create_mrsw_collection<C: ConcurrentCollection>(context: C::Context) -> (
+    MrswCollectionReader<C>,
+    MrswCollectionWriter<C>,
 ) {
-    let mut con1 = CollectionContainer::new(col1, READER, 1024);
-    let mut con2 = CollectionContainer::new(col2, WRITER, 1024);
+    let mut con1 = CollectionContainer::new(context.clone(), READER, 1024);
+    let mut con2 = CollectionContainer::new(context, WRITER, 1024);
     let col = MrswCollection {
         current_reader: AtomicPtr::new(&mut con1),
         current_writer: AtomicPtr::new(&mut con2),
         col1: con1,
         col2: con2,
-        apply_change,
     };
     let col_arc = Arc::new(UnsafeCell::new(col));
     let v = unsafe { &mut *col_arc.get() };
@@ -73,35 +74,35 @@ pub fn create_mrsw_collection<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>>(
     )
 }
 
-pub struct MrswCollectionReader<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> {
-    map: Arc<UnsafeCell<MrswCollection<COL, EVENT, CHANGE>>>,
+pub struct MrswCollectionReader<C: ConcurrentCollection> {
+    map: Arc<UnsafeCell<MrswCollection<C>>>,
 }
 
-impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollectionReader<COL, EVENT, CHANGE> {
+impl<C: ConcurrentCollection> MrswCollectionReader<C> {
     pub fn get<F, R>(&self, act: F) -> R
     where
-        F: FnOnce(&COL) -> R,
+        F: FnOnce(&C) -> R,
     {
         let v = unsafe { &mut *self.map.get() };
         v.get(act)
     }
 }
 
-unsafe impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> Sync
-    for MrswCollectionReader<COL, EVENT, CHANGE>
+unsafe impl<C: ConcurrentCollection> Sync
+    for MrswCollectionReader<C>
 {
 }
-unsafe impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> Send
-    for MrswCollectionReader<COL, EVENT, CHANGE>
+unsafe impl<C: ConcurrentCollection> Send
+    for MrswCollectionReader<C>
 {
 }
 
-pub struct MrswCollectionWriter<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> {
-    map: Arc<UnsafeCell<MrswCollection<COL, EVENT, CHANGE>>>,
+pub struct MrswCollectionWriter<C: ConcurrentCollection> {
+    map: Arc<UnsafeCell<MrswCollection<C>>>,
 }
 
-impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollectionWriter<COL, EVENT, CHANGE> {
-    pub fn add_event(&mut self, event: EVENT) {
+impl<C: ConcurrentCollection> MrswCollectionWriter<C> {
+    pub fn add_event(&mut self, event: C::Event) {
         let v = unsafe { &mut *self.map.get() };
         v.add_event(event);
     }
@@ -112,16 +113,16 @@ impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollectionWriter<COL, EVE
     }
 }
 
-unsafe impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> Send
-    for MrswCollectionWriter<COL, EVENT, CHANGE>
+unsafe impl<C: ConcurrentCollection> Send
+    for MrswCollectionWriter<C>
 {
 }
 
-impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollection<COL, EVENT, CHANGE> {
-    fn add_event(&mut self, event: EVENT) {
+impl<C: ConcurrentCollection> MrswCollection<C> {
+    fn add_event(&mut self, event: C::Event) {
         unsafe {
             let writer = &mut *self.current_writer.load(Ordering::Relaxed);
-            MrswCollection::apply_change(&self.apply_change, &mut writer.col, &event);
+            writer.col.apply(&event);
         }
         unsafe {
             let reader = &mut *self.current_reader.load(Ordering::Relaxed);
@@ -149,7 +150,7 @@ impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollection<COL, EVENT, CH
             let event = reader.event_stream.pop_front();
             match event {
                 Some(e) => {
-                    MrswCollection::apply_change(&self.apply_change, &mut reader.col, &e);
+                    reader.col.apply(&e);
                 }
                 None => {
                     break;
@@ -158,13 +159,9 @@ impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollection<COL, EVENT, CH
         }
     }
 
-    fn apply_change(apply_change: &CHANGE, col: &mut COL, event: &EVENT) {
-        apply_change.apply(col, event);
-    }
-
     fn get<F, R>(&mut self, act: F) -> R
     where
-        F: FnOnce(&COL) -> R,
+        F: FnOnce(&C) -> R,
     {
         loop {
             let reader = self.current_reader.load(Ordering::Relaxed);
@@ -185,15 +182,16 @@ impl<COL, EVENT, CHANGE: ApplyChanges<COL, EVENT>> MrswCollection<COL, EVENT, CH
 #[cfg(test)]
 mod test {
 
-    use crate::event::{
-        create_mrsw_collection, ApplyChanges, MrswCollectionReader, MrswCollectionWriter,
-    };
+    use super::*;
 
+    #[derive(Clone)]
     struct ValueTest {
         id: u32,
     }
 
-    struct ApplyTest {}
+    struct ApplyTest {
+        value: ValueTest,
+    }
 
     enum EventTest {
         MyEvent(u32),
@@ -201,20 +199,31 @@ mod test {
 
     #[test]
     pub fn create_mrsw_collection_test() {
-        let apply_change = ApplyTest {};
+        let value = ValueTest {
+            id: 1
+        };
         let (reader, mut writer) =
-            create_mrsw_collection(ValueTest { id: 1 }, ValueTest { id: 1 }, apply_change);
+            create_mrsw_collection(value);
         writer.add_event(EventTest::MyEvent(2));
         writer.commit();
-        let r = reader.get(|v| v.id);
+        let r = reader.get(|v: &ApplyTest| v.value.id);
         assert_eq!(2, r);
     }
 
-    impl ApplyChanges<ValueTest, EventTest> for ApplyTest {
-        fn apply(&self, map: &mut ValueTest, event: &EventTest) {
+    impl ConcurrentCollection for ApplyTest {
+        type Event = EventTest;
+        type Context = ValueTest;
+
+        fn create(context: ValueTest) -> Self {
+            Self {
+                value: context
+            }
+        }
+
+        fn apply(&mut self, event: &EventTest) {
             match event {
                 EventTest::MyEvent(val) => {
-                    map.id = val.clone();
+                    self.value.id = val.clone();
                 }
             }
         }
