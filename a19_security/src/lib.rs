@@ -7,7 +7,7 @@ use hmac::{ Hmac, Mac };
 use sha2::Sha512;
 use thiserror::Error;
 use crypto_mac::{ InvalidKeyLength, MacResult };
-use generic_array::{ GenericArray, ArrayLength };
+use generic_array::{ GenericArray };
 
 const SIG_START: usize = 0;
 const SIG_END: usize = 64;
@@ -61,7 +61,7 @@ pub fn sign_data_hmac(
             *d=*s
     }
     let mut mac = Hmac::<Sha512>::new_varkey(key)?;
-    mac.input(&out_buffer[SALT_START..]);
+    mac.input(&out_buffer[SIGNED_START..]);
     let result = mac.result();
     for (d, s) in out_buffer[SIG_START..SIG_END]
         .iter_mut()
@@ -77,7 +77,7 @@ pub fn verify_data<'a>(
     if message.len() > HEADER_SIZE {
         let sig = MacResult::new(GenericArray::clone_from_slice(&message[SIG_START..SIG_END]));
         let mut mac = Hmac::<Sha512>::new_varkey(key)?;
-        mac.input(&message[SIG_END..]);
+        mac.input(&message[SIGNED_START..]);
         let result = mac.result();
         // Make sure to use the crypto compare function to prevent timing attacks.
         if result == sig {
