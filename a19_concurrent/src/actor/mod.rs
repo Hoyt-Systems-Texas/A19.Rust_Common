@@ -40,9 +40,9 @@ pub trait ActorMessageHandler {
 const IDLE_STATE: u32 = 0;
 const RUNNING: u32 = 1;
 
-struct ActorInt<MessageHandler: ActorMessageHandler + Send + Sync> {
+struct ActorInt<MessageHandler: ActorMessageHandler> {
     // contains the message handler and the state.
-    actor_message_handler: MessageHandler,
+    actor_message_handler: MessageHandlerGuard<MessageHandler>,
     /// The current active state of the actor.
     current_state: AtomicU32,
     /// The writer for the queue.
@@ -51,24 +51,26 @@ struct ActorInt<MessageHandler: ActorMessageHandler + Send + Sync> {
     reader: MpscQueueReceive<BaseMsg<MessageHandler::Message, MessageHandler::Result>>,
 }
 
-pub struct Actor<MessageHandler: ActorMessageHandler + Send + Sync> {
+pub struct Actor<MessageHandler: ActorMessageHandler> {
+    // Want this pinned in memory to prevent it from being moved since we are using it in different threads.  Also want it boxed so it's in the heapb
     actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>,
 }
 
-struct ActorGuard<MessageHandler: ActorMessageHandler + Send + Sync> {
+struct ActorGuard<MessageHandler: ActorMessageHandler> {
+    // Want this pinned in memory to prevent it from being moved since we are using it in different threads.
     actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>,
 }
 
-impl<MessageHandler: ActorMessageHandler + Send + Sync> ActorGuard<MessageHandler> {
+impl<MessageHandler: ActorMessageHandler> ActorGuard<MessageHandler> {
     fn new(actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>) -> Self {
         Self { actor }
     }
 }
 
-unsafe impl<MessageHandler: ActorMessageHandler + Send + Sync> Sync for ActorGuard<MessageHandler> {}
-unsafe impl<MessageHandler: ActorMessageHandler + Send + Sync> Send for ActorGuard<MessageHandler> {}
+unsafe impl<MessageHandler: ActorMessageHandler> Sync for ActorGuard<MessageHandler> {}
+unsafe impl<MessageHandler: ActorMessageHandler> Send for ActorGuard<MessageHandler> {}
 
-impl<MessageHandler: ActorMessageHandler + Send + Sync + 'static> Actor<MessageHandler> {
+impl<MessageHandler: ActorMessageHandler + 'static> Actor<MessageHandler> {
     pub fn create(context: MessageHandler::Context, queue_size: usize) -> Self {
         Self {
             actor: Arc::new(Box::pin(UnsafeCell::new(ActorInt::create_actor(
@@ -101,11 +103,33 @@ impl<MessageHandler: ActorMessageHandler + Send + Sync + 'static> Actor<MessageH
     }
 }
 
-impl<MessageHandler: ActorMessageHandler + Send + Sync> ActorInt<MessageHandler> {
+struct MessageHandlerGuard<MessageHandler: ActorMessageHandler> {
+    // Needs to be pinned in memory since we are using it from multiple threads.  Also want it boxed so it's in the heap.
+    actor_message_handler: Pin<Box<UnsafeCell<MessageHandler>>>,
+}
+
+impl<MessageHandler: ActorMessageHandler> MessageHandlerGuard<MessageHandler> {
+    
+    async fn apply(&self, msg: BaseMsg<MessageHandler::Message, MessageHandler::Result>) {
+        let future = {
+            let handler = unsafe {&mut *self.actor_message_handler.get()};
+            handler.apply(msg.message)
+        };
+        let r = future.await;
+        msg.sender.send(r).unwrap_or_default();
+    }
+} 
+
+unsafe impl<MessageHandler: ActorMessageHandler> Sync for MessageHandlerGuard<MessageHandler> {}
+unsafe impl<MessageHandler: ActorMessageHandler> Send for MessageHandlerGuard<MessageHandler> {}
+
+impl<MessageHandler: ActorMessageHandler> ActorInt<MessageHandler> {
     fn create_actor(context: MessageHandler::Context, queue_size: usize) -> Self {
         let (writer, reader) = MpscQueueWrap::new(queue_size);
         Self {
-            actor_message_handler: MessageHandler::create(context),
+            actor_message_handler: MessageHandlerGuard{
+                actor_message_handler: Box::pin(UnsafeCell::new(MessageHandler::create(context)))
+            },
             current_state: AtomicU32::new(IDLE_STATE),
             writer,
             reader,
@@ -127,9 +151,7 @@ impl<MessageHandler: ActorMessageHandler + Send + Sync> ActorInt<MessageHandler>
         loop {
             loop {
                 if let Some(a) = self.reader.poll() {
-                    let result = self.actor_message_handler.apply(a.message).await;
-                    // We don't care if it fails.
-                    a.sender.send(result).unwrap_or_default();
+                    self.actor_message_handler.apply(a).await;
                 } else {
                     break;
                 }
@@ -147,4 +169,10 @@ impl<MessageHandler: ActorMessageHandler + Send + Sync> ActorInt<MessageHandler>
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    
+    use super::*;
 }
