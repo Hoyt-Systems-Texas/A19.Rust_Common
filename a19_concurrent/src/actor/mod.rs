@@ -52,7 +52,7 @@ struct ActorInt<MessageHandler: ActorMessageHandler> {
 }
 
 pub struct Actor<MessageHandler: ActorMessageHandler> {
-    // Want this pinned in memory to prevent it from being moved since we are using it in different threads.  Also want it boxed so it's in the heapb
+    // Want this pinned in memory to prevent it from being moved since we are using it in different threads.  Also want it boxed so it's in the heap.
     actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>,
 }
 
@@ -175,4 +175,63 @@ impl<MessageHandler: ActorMessageHandler> ActorInt<MessageHandler> {
 mod tests {
     
     use super::*;
+    use async_trait::async_trait;
+
+    #[derive(PartialEq, Debug)]
+    enum MsgResult {
+        Result1,
+        Result2,
+    }
+
+    enum Msg {
+        Msg1
+    }
+
+    struct Context {
+        id: u32,
+    }
+
+    struct MyHandler {
+
+        context: Context,
+    }
+
+    #[async_trait]
+    impl ActorMessageHandler for MyHandler {
+        
+        type Message = Msg;
+        /// The starting context for the message.
+        type Context = Context;
+        /// The result type for a processing a message.
+        type Result =  MsgResult;
+
+        /// Used to create a new actor.
+        /// # Arguments
+        /// `context` - The context for the actor to use to create.
+        fn create(context: Self::Context) -> Self {
+            Self {
+                context,
+            }
+        }
+
+        /// Called to apply the change of the message.
+        /// # Arguments
+        /// `msg` - The message to the actor.
+        async fn apply(&mut self, msg: Self::Message) -> Self::Result {
+            MsgResult::Result1
+        }
+    }
+
+    #[tokio::test]
+    pub async fn actor_test() {
+        let actor = Actor::<MyHandler>::create(Context {
+            id: 2
+        }, 1024);
+        let msg = Msg::Msg1;
+        let result = actor.send_message(msg).await.unwrap();
+        assert_eq!(result, MsgResult::Result1);
+        let msg = Msg::Msg1;
+        let result = actor.send_message(msg).await.unwrap();
+        assert_eq!(result, MsgResult::Result1);
+    }
 }
