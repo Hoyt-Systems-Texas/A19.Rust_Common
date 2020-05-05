@@ -2,6 +2,7 @@ extern crate time_test;
 
 use std::sync::atomic::AtomicU64;
 
+pub mod actor;
 pub mod buffer;
 pub mod event;
 pub mod map;

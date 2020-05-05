@@ -2,7 +2,7 @@ pub mod file;
 pub mod raft;
 pub mod message_stream;
 
-use futures::channel::oneshot::{self};
+use futures::channel::oneshot;
 
 /// Represents the committing of data as a future.  Since this will be distributed at some point we
 /// want to be able to batch events.

@@ -50,10 +50,9 @@ struct MrswCollection<C: ConcurrentCollection> {
     col2: CollectionContainer<C>,
 }
 
-pub fn create_mrsw_collection<C: ConcurrentCollection>(context: C::Context) -> (
-    MrswCollectionReader<C>,
-    MrswCollectionWriter<C>,
-) {
+pub fn create_mrsw_collection<C: ConcurrentCollection>(
+    context: C::Context,
+) -> (MrswCollectionReader<C>, MrswCollectionWriter<C>) {
     let mut con1 = CollectionContainer::new(context.clone(), READER, 1024);
     let mut con2 = CollectionContainer::new(context, WRITER, 1024);
     let col = MrswCollection {
@@ -88,14 +87,8 @@ impl<C: ConcurrentCollection> MrswCollectionReader<C> {
     }
 }
 
-unsafe impl<C: ConcurrentCollection> Sync
-    for MrswCollectionReader<C>
-{
-}
-unsafe impl<C: ConcurrentCollection> Send
-    for MrswCollectionReader<C>
-{
-}
+unsafe impl<C: ConcurrentCollection> Sync for MrswCollectionReader<C> {}
+unsafe impl<C: ConcurrentCollection> Send for MrswCollectionReader<C> {}
 
 pub struct MrswCollectionWriter<C: ConcurrentCollection> {
     map: Arc<UnsafeCell<MrswCollection<C>>>,
@@ -113,10 +106,7 @@ impl<C: ConcurrentCollection> MrswCollectionWriter<C> {
     }
 }
 
-unsafe impl<C: ConcurrentCollection> Send
-    for MrswCollectionWriter<C>
-{
-}
+unsafe impl<C: ConcurrentCollection> Send for MrswCollectionWriter<C> {}
 
 impl<C: ConcurrentCollection> MrswCollection<C> {
     fn add_event(&mut self, event: C::Event) {
@@ -199,11 +189,8 @@ mod test {
 
     #[test]
     pub fn create_mrsw_collection_test() {
-        let value = ValueTest {
-            id: 1
-        };
-        let (reader, mut writer) =
-            create_mrsw_collection(value);
+        let value = ValueTest { id: 1 };
+        let (reader, mut writer) = create_mrsw_collection(value);
         writer.add_event(EventTest::MyEvent(2));
         writer.commit();
         let r = reader.get(|v: &ApplyTest| v.value.id);
@@ -215,9 +202,7 @@ mod test {
         type Context = ValueTest;
 
         fn create(context: ValueTest) -> Self {
-            Self {
-                value: context
-            }
+            Self { value: context }
         }
 
         fn apply(&mut self, event: &EventTest) {

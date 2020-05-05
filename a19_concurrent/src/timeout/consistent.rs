@@ -17,10 +17,9 @@ pub struct TimeoutFixed<K> {
 }
 
 impl<K> TimeoutFixed<K> {
-
     pub fn with_capacity(capacity: usize) -> Self {
         TimeoutFixed {
-            queue: VecDeque::with_capacity(capacity)
+            queue: VecDeque::with_capacity(capacity),
         }
     }
 
@@ -67,9 +66,22 @@ mod tests {
         let mut timeouts = TimeoutFixed::with_capacity(10);
         timeouts.add(1, 10, 2);
         timeouts.add(2, 12, 3);
-        assert_eq!(Some(TimeoutEntry{expires: 10, key: 1, version: 2,}), timeouts.pop_expired(&13));
-        assert_eq!(Some(TimeoutEntry{expires: 12, key: 2, version: 3,}), timeouts.pop_expired(&13));
+        assert_eq!(
+            Some(TimeoutEntry {
+                expires: 10,
+                key: 1,
+                version: 2,
+            }),
+            timeouts.pop_expired(&13)
+        );
+        assert_eq!(
+            Some(TimeoutEntry {
+                expires: 12,
+                key: 2,
+                version: 3,
+            }),
+            timeouts.pop_expired(&13)
+        );
         assert_eq!(None, timeouts.pop_expired(&0));
     }
-
 }

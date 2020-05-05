@@ -1,5 +1,5 @@
 use crate::buffer::atomic_buffer::{AtomicByteBuffer, AtomicByteBufferInt};
-use crate::buffer::{DirectByteBuffer, next_pos};
+use crate::buffer::{next_pos, DirectByteBuffer};
 use crate::queue::PaddedUsize;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{fence, Ordering};
@@ -238,10 +238,9 @@ impl RingBuffer for ManyToOneBufferInt {
                         // Goto the next message.
                     } else {
                         let record_length_u = record_length as usize;
-                        let byte_arrays = self.buffer.get_bytes(
-                            record_index + HEADER_SIZE,
-                            record_length_u - HEADER_SIZE,
-                        );
+                        let byte_arrays = self
+                            .buffer
+                            .get_bytes(record_index + HEADER_SIZE, record_length_u - HEADER_SIZE);
                         act(message_type, byte_arrays);
                         messages_read += 1;
                         if messages_read >= limit {
@@ -320,10 +319,8 @@ impl ManyToOneBufferInt {
                                 self.buffer.put_i32(size_offset(tail_index), -1);
                                 fence(Ordering::Release);
 
-                                self.buffer.put_i32(
-                                    message_type_offset(tail_index),
-                                    PADDING_MESSAGE_TYPE,
-                                );
+                                self.buffer
+                                    .put_i32(message_type_offset(tail_index), PADDING_MESSAGE_TYPE);
                                 self.buffer
                                     .put_i32_volatile(size_offset(tail_index), padding);
                                 break Some(0);
