@@ -161,7 +161,7 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                             let pos = self.pos(s_index + i);
                             let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                             loop {
-                                let node_id = node.id.load(Ordering::Relaxed);
+                                let node_id = node.id.load(Ordering::Acquire);
                                 if node_id == s_index + i {
                                     let v = replace(&mut node.value, Option::None);
                                     // Need a Store/Store barrier to make sure this is done last.
