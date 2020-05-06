@@ -5,7 +5,7 @@ use futures::channel::oneshot;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{fence, Ordering};
 use std::sync::Arc;
-use std::{cell::UnsafeCell, pin::Pin};
+use std::{cell::UnsafeCell};
 
 pub type ResultFuture<RESULT> = oneshot::Receiver<RESULT>;
 
@@ -53,16 +53,16 @@ struct ActorInt<MessageHandler: ActorMessageHandler> {
 
 pub struct Actor<MessageHandler: ActorMessageHandler> {
     // Want this pinned in memory to prevent it from being moved since we are using it in different threads.  Also want it boxed so it's in the heap.
-    actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>,
+    actor: Arc<Box<UnsafeCell<ActorInt<MessageHandler>>>>,
 }
 
 struct ActorGuard<MessageHandler: ActorMessageHandler> {
     // Want this pinned in memory to prevent it from being moved since we are using it in different threads.
-    actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>,
+    actor: Arc<Box<UnsafeCell<ActorInt<MessageHandler>>>>,
 }
 
 impl<MessageHandler: ActorMessageHandler> ActorGuard<MessageHandler> {
-    fn new(actor: Arc<Pin<Box<UnsafeCell<ActorInt<MessageHandler>>>>>) -> Self {
+    fn new(actor: Arc<Box<UnsafeCell<ActorInt<MessageHandler>>>>) -> Self {
         Self { actor }
     }
 }
@@ -73,7 +73,7 @@ unsafe impl<MessageHandler: ActorMessageHandler> Send for ActorGuard<MessageHand
 impl<MessageHandler: ActorMessageHandler + 'static> Actor<MessageHandler> {
     pub fn create(context: MessageHandler::Context, queue_size: usize) -> Self {
         Self {
-            actor: Arc::new(Box::pin(UnsafeCell::new(ActorInt::create_actor(
+            actor: Arc::new(Box::new(UnsafeCell::new(ActorInt::create_actor(
                 context, queue_size,
             )))),
         }
@@ -105,7 +105,7 @@ impl<MessageHandler: ActorMessageHandler + 'static> Actor<MessageHandler> {
 
 struct MessageHandlerGuard<MessageHandler: ActorMessageHandler> {
     // Needs to be pinned in memory since we are using it from multiple threads.  Also want it boxed so it's in the heap.
-    actor_message_handler: Pin<Box<UnsafeCell<MessageHandler>>>,
+    actor_message_handler: Box<UnsafeCell<MessageHandler>>,
 }
 
 impl<MessageHandler: ActorMessageHandler> MessageHandlerGuard<MessageHandler> {
@@ -128,7 +128,7 @@ impl<MessageHandler: ActorMessageHandler> ActorInt<MessageHandler> {
         let (writer, reader) = MpscQueueWrap::new(queue_size);
         Self {
             actor_message_handler: MessageHandlerGuard{
-                actor_message_handler: Box::pin(UnsafeCell::new(MessageHandler::create(context)))
+                actor_message_handler: Box::new(UnsafeCell::new(MessageHandler::create(context)))
             },
             current_state: AtomicU32::new(IDLE_STATE),
             writer,
