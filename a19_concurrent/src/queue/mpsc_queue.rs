@@ -120,7 +120,7 @@ impl<T> MpscQueue<T> {
             let node = unsafe { self.ring_buffer.get_unchecked(last_pos) };
             loop {
                 // Since we are looping can use relaxed ordering.
-                let node_id = node.id.load(Ordering::Relaxed);
+                let node_id = node.id.load(Ordering::Acquire);
                 // Verify the node id matches the index id.
                 if node_id == s_index {
                     match &node.value {
@@ -146,8 +146,7 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
             let last_pos = self.pos(s_index);
             let node = unsafe { self.ring_buffer.get_unchecked_mut(last_pos) };
             loop {
-                // Since we are going around in a loop can use relaxed.
-                let node_id = node.id.load(Ordering::Relaxed);
+                let node_id = node.id.load(Ordering::Acquire);
                 // Verify the node id matches the index id.
                 if node_id == s_index {
                     self.sequence_number
