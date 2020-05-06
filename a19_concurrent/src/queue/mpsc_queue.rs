@@ -140,7 +140,6 @@ impl<T> MpscQueue<T> {
 impl<T> ConcurrentQueue<T> for MpscQueue<T> {
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T> {
-        let mut i: u64 = 0;
         let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
         let p_index = self.producer.counter.load(Ordering::Relaxed);
         if p_index > s_index {
