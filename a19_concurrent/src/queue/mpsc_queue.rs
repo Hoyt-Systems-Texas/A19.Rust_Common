@@ -120,7 +120,7 @@ impl<T> MpscQueue<T> {
             let node = unsafe { self.ring_buffer.get_unchecked(last_pos) };
             loop {
                 // Since we are looping can use relaxed ordering.
-                let node_id = node.id.load(Ordering::Relaxed);
+                let node_id = node.id.load(Ordering::Acquire);
                 // Verify the node id matches the index id.
                 if node_id == s_index {
                     match &node.value {
@@ -140,15 +140,13 @@ impl<T> MpscQueue<T> {
 impl<T> ConcurrentQueue<T> for MpscQueue<T> {
     /// Used to poll the queue and moves the value to the option if there is a value.
     fn poll(&mut self) -> Option<T> {
-        let mut i: u64 = 0;
         let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
         let p_index = self.producer.counter.load(Ordering::Relaxed);
         if p_index > s_index {
             let last_pos = self.pos(s_index);
             let node = unsafe { self.ring_buffer.get_unchecked_mut(last_pos) };
             loop {
-                // Since we are going around in a loop can use relaxed.
-                let node_id = node.id.load(Ordering::Relaxed);
+                let node_id = node.id.load(Ordering::Acquire);
                 // Verify the node id matches the index id.
                 if node_id == s_index {
                     self.sequence_number

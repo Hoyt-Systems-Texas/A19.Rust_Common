@@ -51,6 +51,9 @@ struct ActorInt<MessageHandler: ActorMessageHandler> {
     reader: MpscQueueReceive<BaseMsg<MessageHandler::Message, MessageHandler::Result>>,
 }
 
+unsafe impl<MessageHandler: ActorMessageHandler> Sync for Actor<MessageHandler> {}
+unsafe impl<MessageHandler: ActorMessageHandler> Send for Actor<MessageHandler> {}
+
 pub struct Actor<MessageHandler: ActorMessageHandler> {
     // Want this pinned in memory to prevent it from being moved since we are using it in different threads.  Also want it boxed so it's in the heap.
     actor: Arc<Box<UnsafeCell<ActorInt<MessageHandler>>>>,
