@@ -106,7 +106,7 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                         match self.sequence_number.counter.compare_exchange_weak(
                             s_index,
                             s_index + 1,
-                            Ordering::Relaxed,
+                            Ordering::Acquire,
                             Ordering::Relaxed,
                         ) {
                             Ok(_) => {
@@ -153,7 +153,7 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                 match self.sequence_number.counter.compare_exchange_weak(
                     s_index,
                     s_index + request,
-                    Ordering::Relaxed,
+                    Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
@@ -206,7 +206,7 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     match self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
-                        Ordering::Relaxed,
+                        Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
                         Ok(_) => {
@@ -251,7 +251,7 @@ mod tests {
     pub fn use_thread_queue_test() {
         time_test!();
         let queue: Arc<MpmcQueueWrap<usize>> = Arc::new(MpmcQueueWrap::new(1_000_000));
-        let write_thread_num = 2;
+        let write_thread_num = 4;
         let mut write_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(write_thread_num);
         let spins: usize = 10_000_000;
         for _ in 0..write_thread_num {
@@ -266,7 +266,7 @@ mod tests {
             write_threads.push(write_thread);
         }
 
-        let thread_num: usize = 2;
+        let thread_num: usize = 4;
         let mut read_threads: Vec<thread::JoinHandle<_>> = Vec::with_capacity(thread_num);
         let read_spins = spins / thread_num;
         for _ in 0..thread_num {

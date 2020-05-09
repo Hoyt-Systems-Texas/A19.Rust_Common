@@ -199,7 +199,7 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                     loop {
                         let pos = self.pos(s_index + i);
                         let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                        let node_id = node.id.load(Ordering::Relaxed);
+                        let node_id = node.id.load(Ordering::Acquire);
                         if node_id == s_index + i {
                             let v = replace(&mut node.value, Option::None);
                             // Need a StoreStore barrier since we need this done last.
@@ -235,7 +235,7 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                 let pos = self.pos(p_index);
                 let mut node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                 // since we are looping don't care if the value is stale since we will eventually get the correct value.
-                if node.id.load(Ordering::Relaxed) == 0 {
+                if node.id.load(Ordering::Acquire) == 0 {
                     match self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
