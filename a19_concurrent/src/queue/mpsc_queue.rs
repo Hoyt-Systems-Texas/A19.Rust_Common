@@ -189,12 +189,12 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
             // Have to do this a little bit different.
             self.sequence_number
                 .counter
-                .store(s_index + request, Ordering::Acquire);
+                .store(s_index + request, Ordering::Relaxed);
             for i in 0..request {
                 loop {
                     let pos = self.pos(s_index + i);
                     let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                    let node_id = node.id.load(Ordering::Relaxed);
+                    let node_id = node.id.load(Ordering::Acquire);
                     if node_id == s_index + i {
                         let v = replace(&mut node.value, Option::None);
                         // Need a StoreStore barrier since we need this done last.
