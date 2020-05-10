@@ -189,7 +189,7 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
             // Have to do this a little bit different.
             self.sequence_number
                 .counter
-                .store(s_index + request, Ordering::Relaxed);
+                .store(s_index + request, Ordering::Acquire);
             for i in 0..request {
                 loop {
                     let pos = self.pos(s_index + i);
@@ -225,7 +225,7 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                 let pos = self.pos(p_index);
                 let mut node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                 // since we are looping don't care if the value is stale since we will eventually get the correct value.
-                if node.id.load(Ordering::Relaxed) == 0 {
+                if node.id.load(Ordering::Acquire) == 0 {
                     if self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
