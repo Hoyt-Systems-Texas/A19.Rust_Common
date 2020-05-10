@@ -152,12 +152,8 @@ impl<MessageHandler: ActorMessageHandler> ActorInt<MessageHandler> {
 
     async fn run(&mut self) {
         loop {
-            loop {
-                if let Some(a) = self.reader.poll() {
-                    self.actor_message_handler.apply(a).await;
-                } else {
-                    break;
-                }
+            while let Some(a) = self.reader.poll() {
+                self.actor_message_handler.apply(a).await;
             }
             self.current_state.store(IDLE_STATE, Ordering::Relaxed);
             // Full barrier here to make sure everything is done before and handle stale values that maybe in the queue.

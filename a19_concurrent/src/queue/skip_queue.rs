@@ -30,7 +30,7 @@ impl<M> SkipQueueReader<M> {
         match self.current_queue {
             ActiveQueue::Primary => self.queue_reader.poll(),
             ActiveQueue::SkipQueue => {
-                if self.skip_queue.len() > 0 {
+                if !self.skip_queue.is_empty() {
                     self.skip_queue.pop_front()
                 } else {
                     self.current_queue = ActiveQueue::Primary;
@@ -49,7 +49,7 @@ impl<M> SkipQueueReader<M> {
 
     /// Switches to the skip queue if there are any values present.
     pub fn switch_to_skip(&mut self) {
-        if self.skip_queue.len() > 0 {
+        if !self.skip_queue.is_empty() {
             self.current_queue = ActiveQueue::SkipQueue
         }
     }
@@ -59,11 +59,11 @@ impl<M> SkipQueueReader<M> {
         match self.current_queue {
             ActiveQueue::Primary => self.queue_reader.peek(),
             ActiveQueue::SkipQueue => {
-                if self.skip_queue.len() > 0 {
-                    self.skip_queue.front()
-                } else {
+                if self.skip_queue.is_empty() {
                     self.current_queue = ActiveQueue::Primary;
                     self.queue_reader.peek()
+                } else {
+                    self.skip_queue.front()
                 }
             }
         }

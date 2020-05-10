@@ -53,7 +53,7 @@ impl<T> MpscQueueReceive<T> {
         }
     }
 
-    pub fn peek<'a>(&'a self) -> Option<&'a T> {
+    pub fn peek(&'_ self) -> Option<&'_ T> {
         let queue = unsafe { &mut *self.queue.get() };
         queue.peek()
     }
@@ -112,7 +112,7 @@ impl<T> MpscQueue<T> {
     /// Used to get the initial value of the queue.
     /// # Returns
     /// Either None if no value i there or some with a reference to the value.
-    fn peek<'a>(&'a self) -> Option<&'a T> {
+    fn peek(&'_ self) -> Option<&'_ T> {
         let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
         let p_index = self.producer.counter.load(Ordering::Relaxed);
         if p_index > s_index {
@@ -123,9 +123,8 @@ impl<T> MpscQueue<T> {
                 let node_id = node.id.load(Ordering::Acquire);
                 // Verify the node id matches the index id.
                 if node_id == s_index {
-                    match &node.value {
-                        Some(value) => break Some(value),
-                        _ => {}
+                    if let Some(value) = &node.value {
+                        break Some(value)
                     }
                 } else {
                     thread::yield_now()
@@ -180,44 +179,37 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
     /// # Returns
     /// The number of items that where returned.
     fn drain(&mut self, act: fn(T), limit: usize) -> usize {
-        loop {
-            let p_index = self.producer.counter.load(Ordering::Relaxed);
-            let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
-            if p_index <= s_index {
-                break 0;
-            } else {
-                let elements_left = p_index - s_index;
-                let request = limit.min(elements_left);
-                // Have to do this a little bit different.
-                self.sequence_number
-                    .counter
-                    .store(s_index + request, Ordering::Relaxed);
-                for i in 0..request {
-                    let mut fail_count: u64 = 0;
-                    loop {
-                        let pos = self.pos(s_index + i);
-                        let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                        let node_id = node.id.load(Ordering::Relaxed);
-                        if node_id == s_index + i {
-                            let v = replace(&mut node.value, Option::None);
-                            // Need a StoreStore barrier since we need this done last.
-                            node.id.store(0, Ordering::Release);
-                            match v {
-                                None => panic!("Found a None!"),
-                                Some(t_value) => act(t_value),
-                            }
-                            break;
-                        } else {
-                            thread::yield_now();
-                            fail_count = fail_count + 1;
-                            if fail_count > 1_000_000_000 {
-                                panic!("Failed to get the node!");
-                            }
+        let p_index = self.producer.counter.load(Ordering::Relaxed);
+        let s_index = self.sequence_number.counter.load(Ordering::Relaxed);
+        if p_index <= s_index {
+            0
+        } else {
+            let elements_left = p_index - s_index;
+            let request = limit.min(elements_left);
+            // Have to do this a little bit different.
+            self.sequence_number
+                .counter
+                .store(s_index + request, Ordering::Relaxed);
+            for i in 0..request {
+                loop {
+                    let pos = self.pos(s_index + i);
+                    let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
+                    let node_id = node.id.load(Ordering::Relaxed);
+                    if node_id == s_index + i {
+                        let v = replace(&mut node.value, Option::None);
+                        // Need a StoreStore barrier since we need this done last.
+                        node.id.store(0, Ordering::Release);
+                        match v {
+                            None => panic!("Found a None!"),
+                            Some(t_value) => act(t_value),
                         }
+                        break;
+                    } else {
+                        thread::yield_now();
                     }
                 }
-                break request;
             }
+            request
         }
     }
 
@@ -234,19 +226,16 @@ impl<T> ConcurrentQueue<T> for MpscQueue<T> {
                 let mut node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                 // since we are looping don't care if the value is stale since we will eventually get the correct value.
                 if node.id.load(Ordering::Relaxed) == 0 {
-                    match self.producer.counter.compare_exchange_weak(
+                    if self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
                         Ordering::Relaxed,
                         Ordering::Relaxed,
-                    ) {
-                        Ok(_) => {
-                            node.value = Some(value);
-                            // Need a StoreStore barrier to prevent reordering of the op above.
-                            node.id.store(p_index, Ordering::Release);
-                            break true;
-                        }
-                        Err(_) => {}
+                    ).is_ok() {
+                        node.value = Some(value);
+                        // Need a StoreStore barrier to prevent reordering of the op above.
+                        node.id.store(p_index, Ordering::Release);
+                        break true;
                     }
                 } else {
                     thread::yield_now();

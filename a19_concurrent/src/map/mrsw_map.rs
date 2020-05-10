@@ -98,11 +98,13 @@ impl<K: Hash + Eq, V, E, TApplyChange: ApplyChanges<K, V, E>> MrswMap<K, V, E, T
     /// way to make a deep clone, I think it is easier just to have the coder provide the maps.
     /// `map2` - The second starting map.
     /// `apply_change` - Used to apply the changes onto the map.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         map1: HashMap<K, V>,
         map2: HashMap<K, V>,
         apply_change: TApplyChange,
-    ) -> (
+    ) ->
+        (
         MrswMapReader<K, V, E, TApplyChange>,
         MrswMapWriter<K, V, E, TApplyChange>,
     ) {

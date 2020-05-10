@@ -35,9 +35,9 @@ impl<K> TimeoutFixed<K> {
     /// Get the top entry if it's expired.
     /// # Arguments
     /// `expires` - The time when it expires.
-    pub fn pop_expired(&mut self, expires: &u64) -> Option<TimeoutEntry<K>> {
+    pub fn pop_expired(&mut self, expires: u64) -> Option<TimeoutEntry<K>> {
         if let Some(t) = self.queue.front() {
-            if t.expires < *expires {
+            if t.expires < expires {
                 self.queue.pop_front()
             } else {
                 None
@@ -58,7 +58,7 @@ mod tests {
         let mut timeouts = TimeoutFixed::with_capacity(20);
         timeouts.add(1, 10, 2);
         timeouts.add(2, 12, 3);
-        assert_eq!(None, timeouts.pop_expired(&1));
+        assert_eq!(None, timeouts.pop_expired(1));
     }
 
     #[test]
@@ -72,7 +72,7 @@ mod tests {
                 key: 1,
                 version: 2,
             }),
-            timeouts.pop_expired(&13)
+            timeouts.pop_expired(13)
         );
         assert_eq!(
             Some(TimeoutEntry {
@@ -80,8 +80,8 @@ mod tests {
                 key: 2,
                 version: 3,
             }),
-            timeouts.pop_expired(&13)
+            timeouts.pop_expired(13)
         );
-        assert_eq!(None, timeouts.pop_expired(&0));
+        assert_eq!(None, timeouts.pop_expired(0));
     }
 }
