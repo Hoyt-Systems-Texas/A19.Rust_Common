@@ -110,12 +110,12 @@ pub trait DirectByteBuffer {
     /// # Arguments
     /// `position` - The position of the bytes start.
     /// `length` - The length of the bytes.
-    fn get_bytes<'a>(&'a self, position: usize, length: usize) -> &'a [u8];
+    fn get_bytes(&'_ self, position: usize, length: usize) -> &'_ [u8];
 
     /// Used to get the bytes as multiple.
     /// `position` - The position of the bytes to start.
     /// `length` - The length of the bytes to get.
-    fn as_bytes_mut<'a>(&'a mut self, position: usize, length: usize) -> &'a mut [u8];
+    fn as_bytes_mut(&'_ mut self, position: usize, length: usize) -> &'_ mut [u8];
 
     /// Set bytes on the buffer.
     /// # Arguments

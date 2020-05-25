@@ -103,30 +103,18 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                     // Verify the node id matches the index id.
                     if node_id == s_index {
                         // Try and claim the slot.
-                        match self.sequence_number.counter.compare_exchange_weak(
+                        if self.sequence_number.counter.compare_exchange_weak(
                             s_index,
                             s_index + 1,
                             Ordering::Acquire,
                             Ordering::Relaxed,
-                        ) {
-                            Ok(_) => {
-                                let v = replace(&mut node.value, Option::None);
-                                node.id.store(0, Ordering::Release);
-                                break v;
-                            }
-                            Err(_) => {}
+                        ).is_ok() {
+                            let v = replace(&mut node.value, Option::None);
+                            node.id.store(0, Ordering::Release);
+                            break v;
                         }
                     } else {
                         thread::yield_now()
-                        /*
-                        i = i + 1;
-                        if i > 1_000_000_000 {
-                            panic!(format!(
-                                "Got stuck on {}:{}:{}:{}:{}",
-                                s_index, p_index, node_id, last_pos, self.capacity
-                            ))
-                        }
-                        */
                     }
                 }
             } else {
@@ -150,43 +138,33 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                 let elements_left = p_index - s_index;
                 let request = limit.min(elements_left);
                 // Have to do this a little bit different.
-                match self.sequence_number.counter.compare_exchange_weak(
+                if self.sequence_number.counter.compare_exchange_weak(
                     s_index,
                     s_index + request,
                     Ordering::Acquire,
                     Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        for i in 0..request {
-                            let pos = self.pos(s_index + i);
-                            let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
-                            loop {
-                                let node_id = node.id.load(Ordering::Acquire);
-                                if node_id == s_index + i {
-                                    let v = replace(&mut node.value, Option::None);
-                                    // Need a Store/Store barrier to make sure this is done last.
-                                    node.id.store(0, Ordering::Release);
-                                    match v {
-                                        None => panic!("Found a None!"),
-                                        Some(t_value) => act(t_value),
-                                    }
-                                    break;
-                                } else {
-                                    thread::yield_now();
-                                    /*
-                                    fail_count = fail_count + 1;
-                                    if fail_count > 1_000_000_000 {
-                                        panic!("Failed to get the node!");
-                                    }
-                                    */
+                ).is_ok() {
+                    for i in 0..request {
+                        let pos = self.pos(s_index + i);
+                        let node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
+                        loop {
+                            let node_id = node.id.load(Ordering::Acquire);
+                            if node_id == s_index + i {
+                                let v = replace(&mut node.value, Option::None);
+                                // Need a Store/Store barrier to make sure this is done last.
+                                node.id.store(0, Ordering::Release);
+                                match v {
+                                    None => panic!("Found a None!"),
+                                    Some(t_value) => act(t_value),
                                 }
+                                break;
+                            } else {
+                                thread::yield_now();
                             }
                         }
-                        break request;
                     }
-                    Err(_) => {}
+                    break request;
                 }
-                break 0;
             }
         }
     }
@@ -203,19 +181,16 @@ impl<T> ConcurrentQueue<T> for MpmcQueue<T> {
                 let pos = self.pos(p_index);
                 let mut node = unsafe { self.ring_buffer.get_unchecked_mut(pos) };
                 if node.id.load(Ordering::Acquire) == 0 {
-                    match self.producer.counter.compare_exchange_weak(
+                    if self.producer.counter.compare_exchange_weak(
                         p_index,
                         p_index + 1,
                         Ordering::Acquire,
                         Ordering::Relaxed,
-                    ) {
-                        Ok(_) => {
-                            node.value = Some(value);
-                            // Need a Store/Store barrier to make sure this is done last.
-                            node.id.store(p_index, Ordering::Release);
-                            break true;
-                        }
-                        Err(_) => {}
+                    ).is_ok() {
+                        node.value = Some(value);
+                        // Need a Store/Store barrier to make sure this is done last.
+                        node.id.store(p_index, Ordering::Release);
+                        break true;
                     }
                 } else {
                     thread::yield_now();

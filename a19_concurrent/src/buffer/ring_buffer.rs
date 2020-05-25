@@ -23,7 +23,7 @@ impl ManyToOneBufferReader {
     /// # Arguments
     /// `act` - The function to call to read in the message.
     /// `limit` - The maximum number of messages to process.
-    pub fn read<'a, F>(&'a self, act: F, limit: u32) -> BytesReadInfo
+    pub fn read<F>(&'_ self, act: F, limit: u32) -> BytesReadInfo
     where
         F: FnMut(i32, &[u8]),
     {
@@ -66,14 +66,14 @@ unsafe impl Sync for ManyToOneBufferWriter {}
 /// Creates a many to one buffer with the writer and reader objects.
 /// # Arguments
 /// `size` - The size to create the buffer.
-pub fn create_many_to_one(size: &usize) -> (ManyToOneBufferReader, ManyToOneBufferWriter) {
-    let cell = Arc::new(UnsafeCell::new(ManyToOneBufferInt::new(*size)));
+pub fn create_many_to_one(size: usize) -> (ManyToOneBufferReader, ManyToOneBufferWriter) {
+    let cell = Arc::new(UnsafeCell::new(ManyToOneBufferInt::new(size)));
     (
         ManyToOneBufferReader {
             buffer: cell.clone(),
         },
         ManyToOneBufferWriter {
-            buffer: cell.clone(),
+            buffer: cell,
         },
     )
 }
@@ -278,7 +278,7 @@ impl RingBuffer for ManyToOneBufferInt {
 
     /// The current consumer position.
     fn consumer_position(&self) -> usize {
-        self.consumer.counter.load(Ordering::Release)
+        self.consumer.counter.load(Ordering::Acquire)
     }
 
     /// The current size of the buffer.
@@ -309,41 +309,30 @@ impl ManyToOneBufferInt {
                         break None;
                     } else {
                         let padding = buffer_end_length as i32;
-                        match self.producer.counter.compare_exchange_weak(
+                        if self.producer.counter.compare_exchange_weak(
                             tail,
                             0,
                             Ordering::SeqCst,
                             Ordering::Relaxed,
-                        ) {
-                            Ok(_) => {
-                                self.buffer.put_i32(size_offset(tail_index), -1);
-                                fence(Ordering::Release);
+                        ).is_ok() {
+                            self.buffer.put_i32(size_offset(tail_index), -1);
+                            fence(Ordering::Release);
 
-                                self.buffer
-                                    .put_i32(message_type_offset(tail_index), PADDING_MESSAGE_TYPE);
-                                self.buffer
-                                    .put_i32_volatile(size_offset(tail_index), padding);
-                                break Some(0);
-                            }
-                            Err(_) => {
-                                // Around again
-                            }
+                            self.buffer
+                                .put_i32(message_type_offset(tail_index), PADDING_MESSAGE_TYPE);
+                            self.buffer
+                                .put_i32_volatile(size_offset(tail_index), padding);
+                            break Some(0);
                         }
                     }
-                } else {
-                    match self.producer.counter.compare_exchange_weak(
-                        tail,
-                        tail + required_capacity,
-                        Ordering::SeqCst,
-                        Ordering::Relaxed,
-                    ) {
-                        Ok(_) => break Some(tail_index),
-                        Err(_) => {
-                            // Around we go.
-                        }
-                    }
+                } else if self.producer.counter.compare_exchange_weak(
+                    tail,
+                    tail + required_capacity,
+                    Ordering::SeqCst,
+                    Ordering::Relaxed,
+                ).is_ok() {
+                    break Some(tail_index);
                 }
-                break Some(0);
             }
         }
     }
@@ -452,7 +441,7 @@ mod tests {
 
     #[test]
     pub fn create_many_to_one_dual() {
-        let (reader, writer) = create_many_to_one(&0x40);
+        let (reader, writer) = create_many_to_one(0x40);
         let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
         for i in 0..2 {
             match writer.write(1, &bytes) {

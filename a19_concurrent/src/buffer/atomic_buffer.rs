@@ -14,7 +14,7 @@ pub trait AtomicByteBuffer: DirectByteBuffer {
     /// # Arguments
     /// `position` - The position to write the unsigned value to.
     /// `value` - The value to write.
-    fn put_u64_volatile(&mut self, position: usize, value: &u64);
+    fn put_u64_volatile(&mut self, position: usize, value: u64);
 
     /// Get a signed i64 value.
     /// # Arguments
@@ -203,14 +203,14 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position of the bytes start.
     /// `length` - The length of the bytes.
-    fn get_bytes<'a>(&'a self, position: usize, length: usize) -> &'a [u8] {
+    fn get_bytes(&'_ self, position: usize, length: usize) -> &'_ [u8] {
         &self.buffer[position..(position + length)]
     }
 
     /// Used to get the bytes as multiple.
     /// `position` - The position of the bytes to start.
     /// `length` - The length of the bytes to get.
-    fn as_bytes_mut<'a>(&'a mut self, position: usize, length: usize) -> &'a mut [u8] {
+    fn as_bytes_mut(&'_ mut self, position: usize, length: usize) -> &'_ mut [u8] {
         &mut self.buffer[position..(position + length)]
     }
 
@@ -252,11 +252,11 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to write the unsigned value to.
     /// `value` - The value to write.
-    fn put_u64_volatile(&mut self, position: usize, value: &u64) {
+    fn put_u64_volatile(&mut self, position: usize, value: u64) {
         fence(Ordering::Release);
         BigEndian::write_u64(
             &mut self.buffer[position..calculate_offset_long(position)],
-            *value,
+            value,
         );
     }
 

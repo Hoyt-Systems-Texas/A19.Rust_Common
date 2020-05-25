@@ -25,6 +25,8 @@ impl MemoryMappedInt {
     /// Used to create a new memory mapped file with the specified file handler.
     /// # Arguments
     /// `file` - The file handler to map the buffer to.
+    /// # Safety
+    /// Unsafe since it allocates memory.
     pub unsafe fn open(file: File) -> Result<Self> {
         let meta_data = file.metadata()?;
         let size = meta_data.len() as usize;
@@ -44,6 +46,8 @@ impl MemoryMappedInt {
     /// # Arguments
     /// `path` - The path of the memory mapped file to create.
     /// `buffer_size` - The size of the buffer to create.
+    /// # Safety
+    /// Allocates memory using a memory mapped file.
     pub unsafe fn new<P: AsRef<Path>>(path: &P, buffer_size: usize) -> Result<MemoryMappedInt> {
         let file = OpenOptions::new()
             .read(true)
@@ -179,14 +183,14 @@ impl DirectByteBuffer for MemoryMappedInt {
     /// # Arguments
     /// `position` - The position of the bytes start.
     /// `length` - The length of the bytes.
-    fn get_bytes<'a>(&'a self, position: usize, length: usize) -> &'a [u8] {
+    fn get_bytes(&'_ self, position: usize, length: usize) -> &'_ [u8] {
         &self.mmap[position..(position + length)]
     }
 
     /// Used to get the bytes as multiple.
     /// `position` - The position of the bytes to start.
     /// `length` - The length of the bytes to get.
-    fn as_bytes_mut<'a>(&'a mut self, position: usize, length: usize) -> &'a mut [u8] {
+    fn as_bytes_mut(&'_ mut self, position: usize, length: usize) -> &'_ mut [u8] {
         &mut self.mmap[position..(position + length)]
     }
 
@@ -227,11 +231,11 @@ impl AtomicByteBuffer for MemoryMappedInt {
     /// `position` - The position to write the unsigned value to.
     /// `value` - The value to write.
     #[inline]
-    fn put_u64_volatile(&mut self, position: usize, value: &u64) {
+    fn put_u64_volatile(&mut self, position: usize, value: u64) {
         fence(Ordering::Release);
         BigEndian::write_u64(
             &mut self.mmap[position..calculate_offset_long(position)],
-            *value,
+            value,
         );
     }
 
