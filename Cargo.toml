@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "a19_actor",
     "a19_core",
     "a19_data_structure",
     "a19_editor",

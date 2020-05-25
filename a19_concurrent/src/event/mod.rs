@@ -63,8 +63,8 @@ pub fn create_mrsw_collection<C: ConcurrentCollection>(
     };
     let col_arc = Arc::new(UnsafeCell::new(col));
     let v = unsafe { &mut *col_arc.get() };
-    v.current_reader.store(&mut v.col1, Ordering::Relaxed);
-    v.current_writer.store(&mut v.col2, Ordering::Relaxed);
+    v.current_reader.store(&mut v.col1, Ordering::Release);
+    v.current_writer.store(&mut v.col2, Ordering::Release);
     (
         MrswCollectionReader {
             map: col_arc.clone(),
@@ -111,25 +111,25 @@ unsafe impl<C: ConcurrentCollection> Send for MrswCollectionWriter<C> {}
 impl<C: ConcurrentCollection> MrswCollection<C> {
     fn add_event(&mut self, event: C::Event) {
         unsafe {
-            let writer = &mut *self.current_writer.load(Ordering::Relaxed);
+            let writer = &mut *self.current_writer.load(Ordering::Acquire);
             writer.col.apply(&event);
         }
         unsafe {
-            let reader = &mut *self.current_reader.load(Ordering::Relaxed);
+            let reader = &mut *self.current_reader.load(Ordering::Acquire);
             reader.event_stream.push_back(event);
         }
     }
 
     fn commit(&mut self) {
-        let reader = unsafe { &mut *self.current_reader.load(Ordering::Relaxed) };
-        let writer = unsafe { &mut *self.current_writer.load(Ordering::Relaxed) };
-        writer.state.store(READER, Ordering::Relaxed);
-        reader.state.store(WRITER_PENDING, Ordering::Relaxed);
-        self.current_reader.store(writer, Ordering::Relaxed);
-        self.current_writer.store(reader, Ordering::Relaxed);
+        let reader = unsafe { &mut *self.current_reader.load(Ordering::Acquire) };
+        let writer = unsafe { &mut *self.current_writer.load(Ordering::Acquire) };
+        writer.state.store(READER, Ordering::Release);
+        reader.state.store(WRITER_PENDING, Ordering::Release);
+        self.current_reader.store(writer, Ordering::Release);
+        self.current_writer.store(reader, Ordering::Release);
         loop {
-            if reader.reader_count.load(Ordering::Relaxed) == 0 {
-                reader.state.store(WRITER, Ordering::Relaxed);
+            if reader.reader_count.load(Ordering::Acquire) == 0 {
+                reader.state.store(WRITER, Ordering::Release);
                 break;
             } else {
                 thread::yield_now()
@@ -154,15 +154,15 @@ impl<C: ConcurrentCollection> MrswCollection<C> {
         F: FnOnce(&C) -> R,
     {
         loop {
-            let reader = self.current_reader.load(Ordering::Relaxed);
+            let reader = self.current_reader.load(Ordering::Acquire);
             unsafe { (*reader).reader_count.fetch_add(1, Ordering::Relaxed) };
-            if unsafe { (*reader).state.load(Ordering::SeqCst) } == READER {
+            if unsafe { (*reader).state.load(Ordering::Acquire) } == READER {
                 let v = unsafe { &(*reader).col };
                 let r = act(v);
-                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Release) };
                 break r;
             } else {
-                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Relaxed) };
+                unsafe { (*reader).reader_count.fetch_sub(1, Ordering::Release) };
                 thread::yield_now()
             }
         }

@@ -5,9 +5,12 @@ use futures::channel::oneshot;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{fence, Ordering};
 use std::sync::Arc;
-use std::{cell::UnsafeCell};
+use std::cell::UnsafeCell;
+
+pub mod collection;
 
 pub type ResultFuture<RESULT> = oneshot::Receiver<RESULT>;
+
 
 /// A simple base message.
 struct BaseMsg<MSG, RESULT: Send> {
