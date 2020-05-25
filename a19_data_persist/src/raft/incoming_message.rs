@@ -113,7 +113,7 @@ pub(crate) fn create_incoming_message_processor(
     file_storage_directory: &str,
     file_prefix: &str,
     file_size: usize,
-    buffer_size: &usize,
+    buffer_size: usize,
 ) -> (IncomingMessageProcessor, IncomingMessageClient) {
     let (read, write) = create_many_to_one(buffer_size);
     let collection =

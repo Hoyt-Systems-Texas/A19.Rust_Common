@@ -2071,8 +2071,8 @@ pub fn startup_single_node<FRead>(
     max_file_size: usize,
     commit_file_size: usize,
     message_processor: FRead,
-    incoming_buffer_size: &usize,
-    incoming_queue_size: &usize,
+    incoming_buffer_size: usize,
+    incoming_queue_size: usize,
 ) -> PersistedMessageFile
 where
     FRead: MessageProcessor + 'static,
@@ -2102,8 +2102,8 @@ where
         1
     };
     let (incoming_reader, incoming_writer) = create_many_to_one(incoming_buffer_size);
-    let (queue_writer, queue_reader) = MpscQueueWrap::new(*incoming_queue_size);
-    let (commit_writer, commit_reader) = SpscQueueSendWrap::new(*incoming_queue_size);
+    let (queue_writer, queue_reader) = MpscQueueWrap::new(incoming_queue_size);
+    let (commit_writer, commit_reader) = SpscQueueSendWrap::new(incoming_queue_size);
     let stop = Arc::new(AtomicU8::new(0));
     let writer_join = Some(write_thread_single(
         stop.clone(),
