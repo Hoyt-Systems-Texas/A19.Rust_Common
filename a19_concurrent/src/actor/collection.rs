@@ -81,7 +81,6 @@ impl<K: Eq + Hash + Clone + Send, V: ActorMessageHandler + 'static> ActorMessage
                 self.writer.commit();
             }
         }
-        ()
     }
 
 }

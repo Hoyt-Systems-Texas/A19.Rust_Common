@@ -41,6 +41,7 @@ impl From<InvalidKeyLength> for SignDataError {
 }
 
 /// Used to signed the data.
+#[allow(clippy::suspicious_assignment_formatting)]
 pub fn sign_data_hmac(
     message: &[u8],
     key: &[u8],
