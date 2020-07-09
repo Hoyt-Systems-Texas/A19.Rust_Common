@@ -1,4 +1,5 @@
-use std::{hash::Hash, collections::HashMap};
+use std::collections::hash_map::Values;
+use std::{hash::Hash , collections::HashMap};
 
 pub struct MultimapLookup<K1: Hash + Clone + Eq, K2: Hash + Clone + Eq, V> {
 	submap_size: usize,
@@ -40,12 +41,24 @@ impl<K1: Hash + Clone + Eq, K2: Hash + Clone + Eq, V> MultimapLookup<K1, K2, V> 
 		}
 	}
 
+	pub fn get_iter(&self, k1: &K1) -> Option<Values<K2, V>> {
+		if let Some(map) = self.map.get(k1) {
+			Some(map.values())
+		} else {
+			None
+		}
+	}
+
 	pub fn remove(&mut self, k1: K1, k2: K2) -> Option<V> {
 		if let Some(internal) = self.map.get_mut(&k1) {
 			internal.remove(&k2)
 		} else {
 			None
 		}
+	}
+
+	pub fn contains_key(&self, k1: &K1) -> bool {
+		self.map.contains_key(k1)
 	}
 }
 
