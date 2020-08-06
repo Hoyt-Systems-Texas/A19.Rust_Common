@@ -29,6 +29,7 @@ pub(crate) enum InternalMessage {
 
 enum RaftState {
     Candidate {
+        round_number: u32,
         votes: HashSet<u32>,
     },
     Follower {
@@ -368,7 +369,7 @@ impl RaftStateMachine {
     }
 
     fn handle_candidate(&mut self, server_id: u32) {
-        if let RaftState::Candidate { votes } = &mut self.current_state {
+        if let RaftState::Candidate { votes, .. } = &mut self.current_state {
             votes.insert(server_id);
             if votes.len() >= self.votes_required as usize {
                 self.current_state = RaftState::Leader {
@@ -388,7 +389,7 @@ impl RaftStateMachine {
     }
 
     fn handle_vote_timeout(&mut self) {
-        if let RaftState::Candidate { votes } = &mut self.current_state {
+        if let RaftState::Candidate { votes, .. } = &mut self.current_state {
             self.voted_for = None;
             votes.clear();
             votes.insert(self.server_id);
@@ -522,7 +523,7 @@ impl RaftStateMachine {
                         // try to become leader.
                         let mut votes = HashSet::with_capacity(self.server_count as usize);
                         votes.insert(self.server_id);
-                        self.current_state = RaftState::Candidate { votes };
+                        self.current_state = RaftState::Candidate { votes, round_number: 1 };
                         self.send_leader_request();
                     }
                     RaftEvent::Stop => {}
@@ -645,6 +646,7 @@ mod test {
         let mut raft_state_machine = RaftStateMachine {
             server_id: 1,
             current_state: RaftState::Candidate {
+                round_number: 0,
                 votes: HashSet::new(),
             },
             current_term_id: 0,
@@ -731,7 +733,7 @@ mod test {
         }
 
         match &state_machine.current_state {
-            RaftState::Candidate { votes } => {}
+            RaftState::Candidate { votes, .. } => {}
             _ => {
                 assert!(false);
             }
