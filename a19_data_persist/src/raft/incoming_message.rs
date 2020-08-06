@@ -260,12 +260,12 @@ mod test {
     #[serial]
     pub fn create_incoming_message_processor_test() {
         clean();
-        let (processor, client) = create_incoming_message_processor(
+        let (_processor, _client) = create_incoming_message_processor(
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
     }
 
@@ -273,12 +273,12 @@ mod test {
     #[serial]
     pub fn process_event_follower_leader_test() {
         clean();
-        let (mut processor, client) = create_incoming_message_processor(
+        let (mut processor, _client) = create_incoming_message_processor(
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             (32 * 1000) as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::Follower { server_id: 2 };
@@ -292,12 +292,12 @@ mod test {
     #[should_panic]
     pub fn process_event_follower_leader_follower_test() {
         clean();
-        let (mut processor, client) = create_incoming_message_processor(
+        let (mut processor, _client) = create_incoming_message_processor(
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
-            (32 * 1000) as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::Follower { server_id: 2 };
@@ -310,12 +310,12 @@ mod test {
     #[serial]
     pub fn process_event_follower_leader_none_test() {
         clean();
-        let (mut processor, client) = create_incoming_message_processor(
+        let (mut processor, _client) = create_incoming_message_processor(
             1,
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000 as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::NoHandler;
@@ -333,7 +333,7 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000 as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         let writer = processor.message_writer_collection.get_current_append(1).unwrap();
@@ -354,7 +354,7 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000 as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::NoHandler;
@@ -374,7 +374,7 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000 as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::Leader {
@@ -393,7 +393,7 @@ mod test {
             FILE_STORAGE_DIRECTORY,
             FILE_PREFIX,
             32 * 1000 as usize,
-            &(32 * 1000 as usize),
+            32 * 1000 as usize,
         );
 
         processor.current_state = IncomingState::Follower { server_id: 2 };

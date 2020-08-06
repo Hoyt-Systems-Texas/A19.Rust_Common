@@ -2299,8 +2299,8 @@ mod tests {
             5000,
             5000,
             processor,
-            &0x40,
-            &0x40,
+            0x40,
+            0x40,
         );
         let bytes: Vec<u8> = vec![10, 11, 12, 13, 14, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32];
         let r = single_node.write(1, &bytes[0..8]).await;
