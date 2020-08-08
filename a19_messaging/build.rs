@@ -3,8 +3,8 @@ use std::path::Path;
 
 fn main() {
     //let out_dir = env::var("OUT_DIR").unwrap();
-    let out_dir = "target";
-    let out_path = format!("{}/a19_messaging/message/", out_dir);
+    let out_dir = "src";
+    let out_path = format!("{}/", out_dir);
     println!(
         "{}",
         format!(
