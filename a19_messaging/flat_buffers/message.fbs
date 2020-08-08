@@ -22,30 +22,39 @@ enum MessageType: ubyte {
 
 // The current state of the messaged.  Only applicable if it's request/reply message.
 enum StateType: ubyte {
+    // A new message.
     New = 0,
+    // If the messaging hasn't been processed yet.
     Pending = 1,
+    // The current message is being processed.
     Processing = 2,
+    // Successfully proessed the message.
     Completed = 3,
+    // An error has occurred while process the message.
     Error = 4,
+    // The user doesn't have access to submit this message.
     AccessDenied = 5,
+    // The service is busy, try again later.
     Busy = 6,
 }
 
 table MessageHeader {
     // The size of the message.
     messageSize: uint (id: 0);
+    // The version id of the message.
+    versionId: ushort(id: 1);
     // The Id of the request.
-    requestId: ulong (id: 1);
+    requestId: ulong (id: 2);
     // The type of the message.
-    messageType: MessageType (id: 2);
+    messageType: MessageType (id: 3);
     // The correlation id of the message.
-    correlationId: CorrelationId (id: 3);
+    correlationId: CorrelationId (id: 4);
     // The typ eof the payload.
-    payloadType: uint (id: 4);
+    payloadType: uint (id: 5);
     // The id of the user who is making the request.
-    userId: Guid(id: 5);
+    userId: Guid(id: 6);
     // The id of the connection the request is to.
-    toConnectionId: Guid(id: 6);
+    toConnectionId: Guid(id: 7);
     // The current state of the request.
-    stateType: StateType(id: 7);
+    stateType: StateType(id: 8);
 }
