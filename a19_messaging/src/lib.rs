@@ -16,11 +16,11 @@ pub enum SystemPush {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MessageEnvelope<USER, REQ, REP, PUSH> {
+pub struct MessageEnvelope<USER, BODY> {
     user_id: USER,
     connection_id: u128,
-    payload: MessagePayload<REQ, REP, PUSH>,
     timestamp: u64,
+    body: BODY,
 }
 
 /// The message envelope used to send messages to the client.

@@ -70,6 +70,8 @@ name = "a19_messaging"
 version = "0.1.0"
 dependencies = [
  "a19_core 0.1.0",
+ "flatbuffers 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "flatc-rust 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.105 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
