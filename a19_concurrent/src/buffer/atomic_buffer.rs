@@ -89,6 +89,7 @@ pub fn calculate_offset_16(position: usize) -> usize {
 
 impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get the capcity of the buffer.
+    #[inline]
     fn capacity(&self) -> usize {
         self.capacity
     }
@@ -96,6 +97,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// used to get a u64 at a location.
     /// # Arguments
     /// `position` - The positon of the byte area.
+    #[inline]
     fn get_u64(&self, position: usize) -> u64 {
         BigEndian::read_u64(&self.buffer[position..calculate_offset_long(position)])
     }
@@ -103,6 +105,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Puts an unsigned long at a location.
     /// `positon` - The positon to put the value.
     /// `value` - The value to put in the buffer.
+    #[inline]
     fn put_u64(&mut self, position: usize, value: u64) {
         BigEndian::write_u64(
             &mut self.buffer[position..calculate_offset_long(position)],
@@ -113,6 +116,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get an signed i64.
     /// # Arguments
     /// `position` - The position to load the integer from.
+    #[inline]
     fn get_i64(&self, position: usize) -> i64 {
         BigEndian::read_i64(&self.buffer[position..calculate_offset_long(position)])
     }
@@ -120,6 +124,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Puts an i64 value into the buffer.
     /// # Arguments
     /// `position` - The position to load the integer to.
+    #[inline]
     fn put_i64(&mut self, position: usize, value: i64) {
         BigEndian::write_i64(
             &mut self.buffer[position..calculate_offset_long(position)],
@@ -130,6 +135,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get a unsigned u32.
     /// # Arguments
     /// `position` - The positon to load the integer from.
+    #[inline]
     fn get_u32(&self, position: usize) -> u32 {
         BigEndian::read_u32(&self.buffer[position..calculate_offset_32(position)])
     }
@@ -138,6 +144,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to put the integer.
     /// `value` - The value to put into the buffer.
+    #[inline]
     fn put_u32(&mut self, position: usize, value: u32) {
         BigEndian::write_u32(
             &mut self.buffer[position..calculate_offset_32(position)],
@@ -148,6 +155,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get a signed i32.
     /// # Arguments
     /// `position` - The positon of the signed integer from.
+    #[inline]
     fn get_i32(&self, position: usize) -> i32 {
         BigEndian::read_i32(&self.buffer[position..calculate_offset_32(position)])
     }
@@ -156,6 +164,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to put the signed into into.
     /// `value` - The vale to put into the buffer.
+    #[inline]
     fn put_i32(&mut self, position: usize, value: i32) {
         BigEndian::write_i32(
             &mut self.buffer[position..calculate_offset_32(position)],
@@ -166,6 +175,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get a an unsigned u16.
     /// # Argments
     /// `position` - The position of the unsighed integer.
+    #[inline]
     fn get_u16(&self, position: usize) -> u16 {
         BigEndian::read_u16(&self.buffer[position..calculate_offset_16(position)])
     }
@@ -174,6 +184,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The positon to put the unsigned integer.
     /// `value` - The value to put into the buffer.
+    #[inline]
     fn put_u16(&mut self, position: usize, value: u16) {
         BigEndian::write_u16(
             &mut self.buffer[position..calculate_offset_16(position)],
@@ -184,6 +195,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get a a signed i16.
     /// # Arguments
     /// `position` - The position of the signed integer.
+    #[inline]
     fn get_i16(&self, position: usize) -> i16 {
         BigEndian::read_i16(&self.buffer[position..calculate_offset_16(position)])
     }
@@ -192,6 +204,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to put the value to.
     /// `value` - The value to place into the buffer.
+    #[inline]
     fn put_i16(&mut self, position: usize, value: i16) {
         BigEndian::write_i16(
             &mut self.buffer[position..calculate_offset_16(position)],
@@ -203,6 +216,7 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position of the bytes start.
     /// `length` - The length of the bytes.
+    #[inline]
     fn get_bytes(&'_ self, position: usize, length: usize) -> &'_ [u8] {
         &self.buffer[position..(position + length)]
     }
@@ -210,10 +224,12 @@ impl DirectByteBuffer for AtomicByteBufferInt {
     /// Used to get the bytes as multiple.
     /// `position` - The position of the bytes to start.
     /// `length` - The length of the bytes to get.
+    #[inline]
     fn as_bytes_mut(&'_ mut self, position: usize, length: usize) -> &'_ mut [u8] {
         &mut self.buffer[position..(position + length)]
     }
 
+    #[inline]
     fn max_message_size(&self) -> usize {
         self.max_message_size
     }
@@ -242,6 +258,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// Used to get a u64 volatile value.
     /// # Arguments
     /// `position` - The position to read the volatile u64 from.
+    #[inline]
     fn get_u64_volatile(&self, position: usize) -> u64 {
         let v = BigEndian::read_u64(&self.buffer[position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -252,6 +269,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to write the unsigned value to.
     /// `value` - The value to write.
+    #[inline]
     fn put_u64_volatile(&mut self, position: usize, value: u64) {
         fence(Ordering::Release);
         BigEndian::write_u64(
@@ -275,6 +293,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// # Arguments
     /// `position` - The position to write the signed value to.
     /// `value` - The value to write.
+    #[inline]
     fn put_i64_volatile(&mut self, position: usize, value: i64) {
         fence(Ordering::Release);
         BigEndian::write_i64(
@@ -286,6 +305,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// Gets an unsigned u32.
     /// # Arguments
     /// `positon` - The position to get the signed integer.
+    #[inline]
     fn get_u32_volatile(&self, position: usize) -> u32 {
         let v = BigEndian::read_u32(&self.buffer[position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -296,6 +316,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     ///  # Arguments
     ///  `position` - The position to put the unsiged integer.
     ///  `value` - The value to write at that location.
+    #[inline]
     fn put_u32_volatile(&mut self, position: usize, value: u32) {
         fence(Ordering::Release);
         BigEndian::write_u32(
@@ -307,6 +328,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     /// Gets an unsigned u32.
     /// # Arguments
     /// `positon` - The position to get the signed integer.
+    #[inline]
     fn get_i32_volatile(&self, position: usize) -> i32 {
         let v = BigEndian::read_i32(&self.buffer[position..calculate_offset_long(position)]);
         fence(Ordering::Acquire);
@@ -317,6 +339,7 @@ impl AtomicByteBuffer for AtomicByteBufferInt {
     ///  # Arguments
     ///  `position` - The position to put the unsiged integer.
     ///  `value` - The value to write at that location.
+    #[inline]
     fn put_i32_volatile(&mut self, position: usize, value: i32) {
         fence(Ordering::Release);
         BigEndian::write_i32(

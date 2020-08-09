@@ -365,7 +365,7 @@ where
                     let current_time = current_time_secs();
                     // Going to do the cleanup in the main thread to prevent having to handle complex race conditions and needing a concurrent hashmap.
                     loop {
-                        if let Some(top) = timeout.pop_expired(&current_time) {
+                        if let Some(top) = timeout.pop_expired(current_time) {
                             if let Some(ctx) = receiver.context_store.get(&top.key) {
                                 match ctx {
                                     ContextOption::Loaded(ctx) => {

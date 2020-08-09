@@ -1,12 +1,16 @@
 // Used to represent a u128 type.
 struct Guid {
+    // The first part of the guid.
     first: ulong;
+    // The last part of the guid.
     last: ulong;
 }
 
 // The correlation id fot the client.
 struct CorrelationId {
+    // The connection id.
     connectionId: Guid;
+    // The message count.
     countId: uint;
 }
 
@@ -38,11 +42,12 @@ enum StateType: ubyte {
     Busy = 6,
 }
 
+// The header for the message.
 table MessageHeader {
     // The size of the message.
     messageSize: uint (id: 0);
     // The version id of the message.
-    versionId: ushort(id: 1);
+    version: ushort(id: 1);
     // The Id of the request.
     requestId: ulong (id: 2);
     // The type of the message.
@@ -57,4 +62,18 @@ table MessageHeader {
     toConnectionId: Guid(id: 7);
     // The current state of the request.
     stateType: StateType(id: 8);
+}
+
+// A simple network packet which is meant to be sent to a client.
+table MessagePacket {
+    // The size of the message.
+    size: uint(id: 0);
+    // The offset starting position of the message.
+    offset: uint(id: 1);
+    // The total number of packets.
+    total: ushort(id: 2);
+    // The correlation id.
+    correlationId: CorrelationId (id: 3);
+    // The version of the packet.
+    version: ushort(id: 4);
 }
