@@ -75,14 +75,17 @@ const LONG_SIZE: usize = 8;
 const INT_SIZE: usize = 4;
 const SHORT_SIZE: usize = 2;
 
+#[inline]
 pub fn calculate_offset_long(position: usize) -> usize {
     position + LONG_SIZE
 }
 
+#[inline]
 pub fn calculate_offset_32(position: usize) -> usize {
     position + INT_SIZE
 }
 
+#[inline]
 pub fn calculate_offset_16(position: usize) -> usize {
     position + SHORT_SIZE
 }
@@ -234,12 +237,14 @@ impl DirectByteBuffer for AtomicByteBufferInt {
         self.max_message_size
     }
 
+    #[inline]
     fn set_bytes(&mut self, position: usize, length: usize, value: u8) {
         for b in self.as_bytes_mut(position, length).iter_mut() {
             *b = value;
         }
     }
 
+    #[inline]
     fn write_bytes(&mut self, position: usize, bytes: &[u8]) {
         for (d, s) in self
             .as_bytes_mut(position, bytes.len())

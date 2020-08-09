@@ -9,9 +9,9 @@ struct Guid {
 // The correlation id fot the client.
 struct CorrelationId {
     // The connection id.
-    connectionId: Guid;
+    connection_id: Guid;
     // The message count.
-    countId: uint;
+    message_id: uint;
 }
 
 // Type for th message.
@@ -45,35 +45,35 @@ enum StateType: ubyte {
 // The header for the message.
 table MessageHeader {
     // The size of the message.
-    messageSize: uint (id: 0);
+    message_size: uint (id: 0);
     // The version id of the message.
     version: ushort(id: 1);
     // The Id of the request.
-    requestId: ulong (id: 2);
+    request_id: ulong (id: 2);
     // The type of the message.
-    messageType: MessageType (id: 3);
+    message_type: MessageType (id: 3);
     // The correlation id of the message.
-    correlationId: CorrelationId (id: 4);
+    correlation_id: CorrelationId (id: 4);
     // The typ eof the payload.
-    payloadType: uint (id: 5);
+    payload_type: uint (id: 5);
     // The id of the user who is making the request.
-    userId: Guid(id: 6);
+    user_id: Guid(id: 6);
     // The id of the connection the request is to.
-    toConnectionId: Guid(id: 7);
+    to_connection_id: Guid(id: 7);
     // The current state of the request.
-    stateType: StateType(id: 8);
+    state_type: StateType(id: 8);
 }
 
 // A simple network packet which is meant to be sent to a client.
 table MessagePacket {
-    // The size of the message.
+    // The total size of the message.
     size: uint(id: 0);
     // The offset starting position of the message.
     offset: uint(id: 1);
     // The total number of packets.
     total: ushort(id: 2);
     // The correlation id.
-    correlationId: CorrelationId (id: 3);
+    correlation_id: CorrelationId (id: 3);
     // The version of the packet.
     version: ushort(id: 4);
 }
