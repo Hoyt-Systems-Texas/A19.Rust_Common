@@ -1,2 +1,2 @@
-# A19.Rust_Common
-The A19 Rust library for A19
+# HoytSys.Rust_Common
+The Hoyt Systems Rust library for Hoyt Systems of Texas
